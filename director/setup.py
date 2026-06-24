@@ -7,8 +7,7 @@ into <repo>/.opencode/agents/ (a.k.a. the `director sync-agents` step).
 
 Provider auth (Bedrock/OpenRouter keys, the LM Studio endpoint) is the operator's
 responsibility — it lives in the user's *global* OpenCode config. We add the
-project-local agent files, a starter opencode.json if the repo has none, and seed
-a ready-to-edit .director/config.toml from the bundled example (if none exists).
+project-local agent files, a starter opencode.json if the repo has none.
 """
 
 from __future__ import annotations
@@ -24,11 +23,6 @@ AGENT_FILES = (
     "executor.md",
     "reviewer.md",
 )
-
-# A complete, commented example config ships inside the package. sync-agents seeds
-# it to <repo>/.director/config.toml (if missing) so a pip-installed user has a
-# ready-to-edit config rather than nothing.
-CONFIG_EXAMPLE = "config.example.toml"
 
 # Runtime artifacts director writes into <repo>/.director/. These must never be
 # committed: director's own commits use `git add -A` (to capture whatever the
@@ -53,10 +47,6 @@ worktrees/
 
 def _template(name: str) -> str:
     return ir.files("director.agent_templates").joinpath(name).read_text()
-
-
-def _example_config() -> str:
-    return ir.files("director").joinpath(CONFIG_EXAMPLE).read_text()
 
 
 def ensure_director_gitignore(repo: str | Path) -> None:
@@ -90,12 +80,4 @@ def sync_agents(repo: str | Path) -> list[str]:
     if not oc.exists():
         oc.write_text(_template("opencode.json"))
         written.append(str(oc.relative_to(repo)))
-
-    # Seed a ready-to-edit config from the bundled example — but never clobber an
-    # existing config the user may have edited.
-    cfg = repo / ".director" / "config.toml"
-    if not cfg.exists():
-        cfg.parent.mkdir(parents=True, exist_ok=True)
-        cfg.write_text(_example_config())
-        written.append(str(cfg.relative_to(repo)))
     return written

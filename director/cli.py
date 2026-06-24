@@ -1,4 +1,4 @@
-"""director CLI — plan | run | status | bench | sync-agents."""
+"""director CLI — plan | run | status | bench | sync-agents | init."""
 
 from __future__ import annotations
 
@@ -78,6 +78,14 @@ def cmd_sync_agents(args) -> int:
     return 0
 
 
+def cmd_init(args) -> int:
+    from director.init import run_init
+
+    path = run_init(args.repo)
+    print(f"Wrote {path}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="director", description=__doc__)
     p.add_argument("--version", action="version", version=f"director {__version__}")
@@ -150,6 +158,10 @@ def build_parser() -> argparse.ArgumentParser:
     psa = sub.add_parser("sync-agents", help="(re)install role agents into <repo>/.opencode")
     psa.add_argument("--repo", default=".")
     psa.set_defaults(func=cmd_sync_agents)
+
+    pi = sub.add_parser("init", help="interactively configure .director/config.toml")
+    pi.add_argument("--repo", default=".")
+    pi.set_defaults(func=cmd_init)
     return p
 
 

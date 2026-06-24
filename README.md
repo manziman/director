@@ -53,11 +53,14 @@ director never manages provider keys itself — that lives in your OpenCode conf
 ```bash
 cd your-repo
 
-# 1. Install director's role agents into .opencode/ and seed .director/config.toml
+# 1. Install director's role agents (+ gitignore, starter opencode.json) into .opencode/
 director sync-agents
 
-# 2. Edit .director/config.toml — bind roles to models, set your gate commands.
-#    (sync-agents seeded it from the bundled, fully-commented example.)
+# 2. Create .director/config.toml interactively — director init asks which model to
+#    use per role and what your gate commands are, then writes the config for you.
+director init
+#    (See director/config.example.toml for the full/advanced schema if you want to
+#     hand-tune beyond what init prompts for.)
 $EDITOR .director/config.toml
 
 # 3. Plan: brainstorm → spec → test-gated task DAG (two approval gates)
@@ -92,17 +95,20 @@ director run
 | `director run [--parallel N] [--max-attempts K]` | Execute the DAG: each node in an isolated git worktree, gated by tests/lint/typecheck, auto-merged on pass; escalates a stuck node one tier up. |
 | `director status` | Per-node progress, attempts, cost, and the executor-tier completion rate. |
 | `director bench "<task>" --profiles a,b,c` | Run the **same** task (same frozen acceptance tests) across profile variants and diff cost / quality / wall-time. |
-| `director sync-agents` | (Re)install the role agents into `<repo>/.opencode` and seed `.director/config.toml`. |
+| `director init [--repo .]` | Interactively create `.director/config.toml` — asks which model to use per role and your gate commands. |
+| `director sync-agents` | (Re)install the role agents into `<repo>/.opencode` (plus a gitignore and a starter `opencode.json`). |
 
 All state lives under `.director/` (resumable, debuggable): `plan.json`, `state.json`,
 `costs.jsonl`, `metrics.jsonl`, per-call `logs/`, and `bench/`.
 
 ## Configuration
 
-`director sync-agents` seeds `.director/config.toml` from a complete, commented example
-(also at [`director/config.example.toml`](director/config.example.toml)). A config is
-just roles → `provider/model` strings, the deterministic gate commands, per-model
-pricing, and run limits — the example shows how to bind the executor tier to a local
+`director init` interactively creates `.director/config.toml` — it asks which model
+to use for each role and what your deterministic gate commands are, then writes the
+config for you. A config is just roles → `provider/model` strings, the deterministic
+gate commands, per-model pricing, and run limits. For the full/advanced schema, see
+the complete, commented [`director/config.example.toml`](director/config.example.toml):
+it shows how to bind the executor tier to a local
 model (≈ $0 implementation), a low-cost cloud model (zero local infra), or a frontier
 model (the expensive baseline). See [`director/README.md`](director/README.md) for the
 full architecture (gates, two-stage review, red-green hardening, metrics).

@@ -77,8 +77,7 @@ def load(repo: Path) -> Config:
     path = Path(repo) / ".director" / "config.toml"
     if not path.exists():
         raise FileNotFoundError(
-            f"{path} not found. Run `director sync-agents` to seed it from the bundled "
-            f"example, then edit it."
+            f"{path} not found. Run `director init` to create it interactively."
         )
     return load_file(path)
 
