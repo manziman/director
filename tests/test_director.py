@@ -1,9 +1,15 @@
-"""Offline validation of Phase 3 deliverables.
+"""Offline validation suite.
 
 Stubs only the single external boundary (opencode.run_agent); everything else —
 gates, the run scheduler, metrics emission, and the bench orchestration — is the
 real code, exercised against real temp git repos with stdlib unittest. No model
 or network time is spent.
+
+Note on scope: these stubs prove the *control flow* fast and deterministically,
+but integration faults (git semantics, the process environment, a target repo's
+.gitignore) only surface against real OpenCode + git + a real model. Treat a live
+run — wrapped in a wall-clock `timeout` — as mandatory acceptance for anything
+touching git, subprocess env, or the filesystem; the stubs cannot model those.
 """
 
 import json

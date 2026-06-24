@@ -44,5 +44,21 @@ Trusted Publishing.
 
 ## Lessons that shaped the design
 
-Before changing the gate/scheduler/git logic, skim [`docs/lessons-learned.md`](docs/lessons-learned.md)
-— several non-obvious decisions there were paid for with real bugs.
+Several non-obvious decisions were paid for with real bugs; each is documented at
+its point in the code — read the comment before changing that logic:
+
+- **Respect the target repo's `.gitignore`.** Tooling writes untracked files that
+  `git add -A` then sweeps into commits, breaking later merges/checkouts. See
+  `setup.ensure_director_gitignore`, `gates._is_ignorable`, and `opencode._CLEAN_ENV`.
+- **Deterministic gates decide; LLM judgment is advisory or cost-gated.** See the
+  `gates` module docstring, `review.review_node`, and `opencode.watch_it_fail`.
+- **Pass config as an object; never re-read it mid-operation.** See `config.load_file`
+  and the `bench` module docstring.
+- **Cleanup is non-fatal once the result is collected.** See the `finally` block in
+  `bench.run_bench`.
+- **The scheduler tracks terminal state** (done|failed|escalated) so a failed node is
+  never re-scheduled. See `run.run_job`.
+
+Two process notes with no single code home: offline stubs prove control flow but only
+live runs find integration bugs (see the `tests/` module docstring), and live runs
+should always be wrapped in a wall-clock `timeout` to bound a logic-bug runaway.

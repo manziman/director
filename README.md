@@ -16,8 +16,7 @@ a frontier model — or anything in between — is a one-line config edit, never
 change. director drives OpenCode headlessly, so it inherits OpenCode's 75+ providers.
 
 > **Status:** beta. Validated end-to-end (plan → run → bench) under local, cheap-cloud,
-> and all-frontier profiles. See [`docs/lessons-learned.md`](docs/lessons-learned.md)
-> for the design lessons.
+> and all-frontier executor tiers.
 
 ---
 

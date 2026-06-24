@@ -19,3 +19,6 @@ dist/
 # OS / editor
 .DS_Store
 *.swp
+
+# retained locally, not published
+docs/lessons-learned.md
