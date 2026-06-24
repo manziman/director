@@ -68,9 +68,7 @@ class SyncAgentsNoSeedTests(unittest.TestCase):
     def test_returned_paths_are_repo_relative(self):
         written = setup.sync_agents(self.tmp)
         for p in written:
-            self.assertFalse(
-                Path(p).is_absolute(), f"expected repo-relative path, got {p!r}"
-            )
+            self.assertFalse(Path(p).is_absolute(), f"expected repo-relative path, got {p!r}")
 
     def test_existing_opencode_json_not_clobbered(self):
         oc = self.tmp / ".opencode" / "opencode.json"

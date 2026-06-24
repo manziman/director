@@ -27,7 +27,7 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from director import gitutil, setup
+from director import gitutil, opencode, setup
 from director.config import Config
 from director.cost import CostLedger
 from director.dag import topo_order, validate
@@ -384,6 +384,7 @@ def run_plan(
     cont: bool = False,
 ) -> PlanResult:
     repo = Path(repo).resolve()
+    opencode.set_runtime(dict(cfg.runtime))
     fdir = repo / ".director"
     logs = fdir / "logs"
     setup.ensure_director_gitignore(repo)  # never let `git add -A` commit .director runtime files

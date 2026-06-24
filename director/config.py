@@ -8,7 +8,7 @@ switching executor models is a config edit, never a code change.
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 ROLES = ("planner", "test_author", "executor", "explorer", "reviewer", "escalation")
@@ -24,12 +24,17 @@ class Config:
     sampling: dict  # role -> {temperature, top_p, top_k}
     local: dict  # providers.local: base_url, api_key
     review: dict  # two-stage review knobs (Phase 2.5)
+    # Optional (default {}) so existing Config(...) callers don't need updating.
+    runtime: dict = field(default_factory=dict)  # role -> backend ("opencode"|"claude-code")
 
     # --- convenience resolvers ----------------------------------------------
     def model_for(self, role: str) -> str:
         if role not in self.tiers:
             raise KeyError(f"role '{role}' not bound in [tiers] of {self.path}")
         return self.tiers[role]
+
+    def backend_for(self, role: str) -> str:
+        return self.runtime.get(role, "opencode")
 
     def price(self, model: str) -> dict:
         return self.pricing.get(model, {"input": 0.0, "output": 0.0})
@@ -107,4 +112,5 @@ def load_file(path: Path) -> Config:
         sampling=data.get("sampling", {}),
         local=data.get("providers", {}).get("local", {}),
         review=data.get("review", {}),
+        runtime=data.get("runtime", {}),
     )

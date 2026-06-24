@@ -22,7 +22,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from director import dag, gitutil, setup
+from director import dag, gitutil, opencode, setup
 from director.config import Config
 from director.cost import CostLedger, cost_of
 from director.gates import GateResult, integration_gate, node_gate
@@ -214,6 +214,7 @@ def run_job(repo: str, cfg: Config, parallel: int, max_attempts: int, log) -> di
     wt_root = Path(tempfile.gettempdir()) / "director-worktrees" / plan.job_id
     wt_root.mkdir(parents=True, exist_ok=True)
     git_lock = threading.Lock()
+    opencode.set_runtime(dict(cfg.runtime))
 
     if gitutil.current_branch(repo) != plan.job_branch:
         gitutil.checkout(plan.job_branch, repo)

@@ -61,11 +61,7 @@ class ParseModelsTests(unittest.TestCase):
 
     def test_skips_header_blank_and_dedupes(self):
         text = (
-            "Available models:\n"
-            "anthropic/claude-opus-4\n"
-            "\n"
-            "anthropic/claude-opus-4\n"
-            "openai/gpt-4o"
+            "Available models:\nanthropic/claude-opus-4\n\nanthropic/claude-opus-4\nopenai/gpt-4o"
         )
         out = init.parse_models(text)
         self.assertEqual(out, ["anthropic/claude-opus-4", "openai/gpt-4o"])
@@ -279,7 +275,7 @@ class RenderConfigTests(unittest.TestCase):
 
     def test_trailing_comment_block_mentions_example(self):
         text = init.render_config({"planner": "p/m"}, {"test": ""})
-        after_gates = text[text.index("[gates]"):]
+        after_gates = text[text.index("[gates]") :]
         comment_lines = [ln for ln in after_gates.splitlines() if ln.startswith("# ")]
         self.assertTrue(comment_lines, "expected a trailing '# ' comment block")
         self.assertIn("config.example.toml", after_gates)
@@ -295,9 +291,11 @@ class RunInitTests(unittest.TestCase):
         """Drive run_init with discovery + interactive builtins stubbed."""
         fi = scripted_input(answers)
         buf = io.StringIO()
-        with mock.patch.object(init, "discover_models", return_value=models), \
-                mock.patch.object(builtins, "input", fi), \
-                redirect_stdout(buf):
+        with (
+            mock.patch.object(init, "discover_models", return_value=models),
+            mock.patch.object(builtins, "input", fi),
+            redirect_stdout(buf),
+        ):
             path = init.run_init(str(self.tmp))
         return path, buf.getvalue(), fi
 
@@ -321,9 +319,7 @@ class RunInitTests(unittest.TestCase):
         self.assertEqual(cfg.gates["typecheck"], "")
 
     def test_all_six_tiers_present(self):
-        path, _, _ = self._run(
-            models=["a/b"], answers=self._menu_answers(["", "", ""])
-        )
+        path, _, _ = self._run(models=["a/b"], answers=self._menu_answers(["", "", ""]))
         cfg = config.load_file(self.cfg_path)
         self.assertEqual(set(cfg.tiers), set(ROLES))
 

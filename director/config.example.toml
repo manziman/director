@@ -24,6 +24,13 @@ escalation  = "amazon-bedrock/anthropic.claude-sonnet-4-6"    # per-task fallbac
 # all-frontier baseline (expensive control): set executor = reviewer = escalation
 #   to the same frontier model as the planner.
 
+# [runtime] maps each role name to its agent backend for execution. Valid values
+# are "opencode" (the default) and "claude-code". Any role not explicitly listed
+# defaults to "opencode". This lets a single run mix backends per role, so you can
+# drive certain roles through the claude CLI while others stay on opencode:
+#   planner  = "claude-code"   # drive this role via the `claude` CLI instead of opencode
+#   executor = "opencode"      # (default) other roles stay on opencode
+
 # Only needed if a tier above points at a local OpenAI-compatible endpoint.
 [providers.local]
 base_url = "http://localhost:1234/v1"   # e.g. LM Studio; load a model there first
