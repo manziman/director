@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Claude Code local state
+.claude/
+
+# Director dogfooding output in THIS repo (the example profiles ship in the package
+# at director/profiles/; .director/ and .opencode/ here are just `sync-agents`/run
+# artifacts and are regenerated on demand).
+.director/
+.opencode/
+
+# OS / editor
+.DS_Store
+*.swp

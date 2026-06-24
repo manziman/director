@@ -1,0 +1,50 @@
+name: Release
+
+# Two paths:
+#  - push to main  → python-semantic-release: bump version from conventional commits,
+#                    update CHANGELOG, tag, GitHub release, then publish to PyPI.
+#  - manual run    → build the CURRENT version and publish to PyPI. Use this once for
+#                    the initial 0.3.0 (semantic-release won't bump without a release-
+#                    worthy commit since the last tag).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  semantic-release:
+    if: github.event_name == 'push' && !contains(github.event.head_commit.message, '[skip ci]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # push the version commit + tag, create the GitHub release
+      id-token: write        # PyPI Trusted Publishing (OIDC) — no API token needed
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0      # semantic-release needs full history to analyze commits
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Python Semantic Release
+        id: release
+        uses: python-semantic-release/python-semantic-release@v9
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish to PyPI
+        if: steps.release.outputs.released == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  manual-publish:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write        # PyPI Trusted Publishing (OIDC)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Build current version
+        run: uv build
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "lmstudio": {
+      "name": "LM Studio",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "http://localhost:1234/v1"
+      },
+      "models": {
+        "qwen3.6-27b-mtp": {
+          "name": "Qwen3.6 27B MTP",
+          "interleaved": {
+            "field": "reasoning_content"
+          },
+          "limit": {
+            "context": 131072,
+            "output": 16384
+          }
+        },
+        "qwen3-coder-next": {
+          "name": "Qwen3-Coder-Next (80B-A3B)",
+          "limit": {
+            "context": 131072,
+            "output": 16384
+          }
+        }
+      }
+    }
+  },
+  "agent": {
+    "plan": {
+      "model": "amazon-bedrock/us.anthropic.claude-opus-4-7"
+    },
+    "build": {
+      "model": "lmstudio/qwen3.6-27b-mtp"
+    }
+  }
+}
