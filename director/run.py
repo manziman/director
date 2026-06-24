@@ -123,6 +123,7 @@ def _process_node(
         res = run_agent(
             agent="executor",
             model=model,
+            tier=tier,
             message=_executor_message(node, worktree, feedback),
             cwd=worktree,
             log_path=logs / f"{node.id}-{tier}-{i}.jsonl",

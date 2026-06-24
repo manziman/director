@@ -99,11 +99,15 @@ def run_agent(
     cwd: str | Path,
     log_path: str | Path,
     timeout: int,
+    tier: str | None = None,
 ) -> RunResult:
-    """Invoke an OpenCode agent headlessly in `cwd`. NDJSON events go to
-    `log_path`; OpenCode logs go to `log_path + '.stderr'`. Never raises on a
-    model/agent failure — inspect RunResult.ok / .error / .timed_out."""
-    backend = _RUNTIME.get(agent, "opencode")
+    """Invoke an agent headlessly in `cwd`. The runtime backend is selected by
+    `tier` (the role whose model is being used) — NOT by `agent`, because agent
+    template names differ from role names (the `brainstorm`/`planner` agents both
+    run at the `planner` tier; the `executor` agent serves both the `executor` and
+    `escalation` tiers). `_RUNTIME` is keyed by role/tier. Never raises on a
+    failure — inspect RunResult.ok / .error / .timed_out."""
+    backend = _RUNTIME.get(tier, "opencode")
     if backend == "claude-code":
         from director.claudecode import run_claude
 

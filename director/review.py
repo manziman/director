@@ -92,6 +92,7 @@ def review_node(
         s1 = run_agent(
             agent="reviewer",
             model=cfg.model_for("explorer"),
+            tier="explorer",
             message=_reviewer_message(node, diff, "stage-one spec-compliance"),
             cwd=worktree,
             log_path=logs / f"{node.id}-review-stage1.jsonl",
@@ -113,6 +114,7 @@ def review_node(
     rv = run_agent(
         agent="reviewer",
         model=model,
+        tier="reviewer",
         message=_reviewer_message(node, diff, "stage-two code-quality"),
         cwd=worktree,
         log_path=logs / f"{node.id}-review-stage2.jsonl",

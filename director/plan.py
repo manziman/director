@@ -209,6 +209,7 @@ def _recon(prog: PlanProgress, repo: Path, cfg: Config, ledger: CostLedger, logs
     ex = run_agent(
         agent="explorer",
         model=cfg.model_for("explorer"),
+        tier="explorer",
         message=_explorer_prompt(prog.task),
         cwd=repo,
         log_path=logs / f"{prog.job_id}-explorer.jsonl",
@@ -229,6 +230,7 @@ def _stage_a_spec(
     bs = run_agent(
         agent="brainstorm",
         model=cfg.model_for("planner"),
+        tier="planner",
         message=_brainstorm_prompt(prog.task, summary),
         cwd=repo,
         log_path=logs / f"{prog.job_id}-brainstorm.jsonl",
@@ -248,6 +250,7 @@ def _critique_spec(
     cr = run_agent(
         agent="brainstorm",
         model=cfg.model_for("planner"),
+        tier="planner",
         message=_spec_critique_prompt(prog.task, spec),
         cwd=repo,
         log_path=logs / f"{prog.job_id}-spec-critique.jsonl",
@@ -270,6 +273,7 @@ def _author_tests(plan: Plan, repo: Path, cfg: Config, ledger: CostLedger, logs:
         ta = run_agent(
             agent="test-author",
             model=cfg.model_for("test_author"),
+            tier="test_author",
             message=_testauthor_prompt(node),
             cwd=repo,
             log_path=logs / f"{plan.job_id}-tests-{node.id}.jsonl",
@@ -318,6 +322,7 @@ def _stage_bc_decompose(
     pl = run_agent(
         agent="planner",
         model=cfg.model_for("planner"),
+        tier="planner",
         message=_planner_prompt(spec, summary),
         cwd=repo,
         log_path=logs / f"{prog.job_id}-planner.jsonl",
@@ -344,6 +349,7 @@ def _critique_plan(
     cr = run_agent(
         agent="planner",
         model=cfg.model_for("planner"),
+        tier="planner",
         message=_plan_critique_prompt(spec, plan.to_json()),
         cwd=repo,
         log_path=logs / f"{prog.job_id}-plan-critique.jsonl",

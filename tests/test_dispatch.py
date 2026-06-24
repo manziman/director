@@ -156,7 +156,7 @@ class TestModuleSurface(unittest.TestCase):
         sig = inspect.signature(run_agent)
         self.assertEqual(
             set(sig.parameters),
-            {"agent", "model", "message", "cwd", "log_path", "timeout"},
+            {"agent", "model", "message", "cwd", "log_path", "timeout", "tier"},
         )
 
     def test_run_opencode_signature_is_keyword_only(self):
@@ -389,11 +389,12 @@ class TestClaudeDispatch(_RuntimeResetMixin, unittest.TestCase):
         oc.set_runtime({"planner": "claude-code"})
         fake, orig = self._install_fake_claude()
         try:
-            r = run_agent(**_kwargs(agent="planner"))
+            r = run_agent(**_kwargs(agent="brainstorm", tier="planner"))
         finally:
             self._restore_claude(fake, orig)
         self.assertEqual(len(fake.calls), 1)
-        self.assertEqual(fake.calls[0]["agent"], "planner")
+        # agent name is forwarded unchanged; routing is by tier, not agent
+        self.assertEqual(fake.calls[0]["agent"], "brainstorm")
         self.assertIs(r, fake.return_value)
 
     def test_claude_kwargs_forwarded_unchanged(self):
@@ -403,6 +404,7 @@ class TestClaudeDispatch(_RuntimeResetMixin, unittest.TestCase):
             run_agent(
                 agent="planner",
                 model="openrouter/anthropic/claude-opus-4.8",
+                tier="planner",
                 message="plan this",
                 cwd="/tmp/work",
                 log_path="logs/p.json",
@@ -509,9 +511,10 @@ class TestPerRoleIndependence(_RuntimeResetMixin, unittest.TestCase):
         orig_oc = oc._run_opencode
         oc._run_opencode = lambda **kw: (oc_calls.append(kw), _result("oc"))[1]
         try:
-            run_agent(**_kwargs(agent="planner"))
-            run_agent(**_kwargs(agent="executor"))
-            run_agent(**_kwargs(agent="reviewer"))
+            # routing is by tier; the brainstorm agent runs at the planner tier
+            run_agent(**_kwargs(agent="brainstorm", tier="planner"))
+            run_agent(**_kwargs(agent="executor", tier="executor"))
+            run_agent(**_kwargs(agent="reviewer", tier="reviewer"))
         finally:
             if orig_cc is None:
                 sys.modules.pop("director.claudecode", None)
@@ -521,7 +524,7 @@ class TestPerRoleIndependence(_RuntimeResetMixin, unittest.TestCase):
 
         claude_agents = [c["agent"] for c in fake.calls]
         opencode_agents = [c["agent"] for c in oc_calls]
-        self.assertEqual(claude_agents, ["planner", "reviewer"])
+        self.assertEqual(claude_agents, ["brainstorm", "reviewer"])
         self.assertEqual(opencode_agents, ["executor"])
 
     def test_unmapped_role_always_opencode(self):
@@ -533,8 +536,8 @@ class TestPerRoleIndependence(_RuntimeResetMixin, unittest.TestCase):
         orig_cc = sys.modules.get("director.claudecode")
         sys.modules["director.claudecode"] = fake
         try:
-            run_agent(**_kwargs(agent="explorer"))
-            run_agent(**_kwargs(agent="test_author"))
+            run_agent(**_kwargs(agent="explorer", tier="explorer"))
+            run_agent(**_kwargs(agent="test-author", tier="test_author"))
         finally:
             if orig_cc is None:
                 sys.modules.pop("director.claudecode", None)
@@ -556,7 +559,7 @@ class TestPerRoleIndependence(_RuntimeResetMixin, unittest.TestCase):
         )
         try:
             for role in roles:
-                run_agent(**_kwargs(agent=role))
+                run_agent(**_kwargs(agent=role, tier=role))
         finally:
             if orig_cc is None:
                 sys.modules.pop("director.claudecode", None)
