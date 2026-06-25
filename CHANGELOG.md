@@ -1,6 +1,32 @@
 # CHANGELOG
 
 
+## v0.4.1 (2026-06-25)
+
+### Bug Fixes
+
+- Prune stale director-authored test files on plan re-run
+  ([#5](https://github.com/manziman/director/pull/5),
+  [`e644239`](https://github.com/manziman/director/commit/e644239974840cfe3518138089f0872f3d02c976))
+
+`_author_tests` overwrote the current DAG's test files but never removed test files authored by an
+  earlier attempt of the same job whose nodes are gone from the current DAG. `commit_all`'s `git add
+  -A` then swept those stale files onto the job branch, and a later run's full-suite integration
+  gate failed on the obsolete contracts.
+
+Prune `prev_tests - current_tests` before committing, where prev_tests is the union of the previous
+  plan.json's node.tests (read from disk in _stage_bc_decompose before it is overwritten; taken from
+  the in-memory pre-revision plan in _critique_plan). The prune set is always a subset of a prior
+  DAG's node.tests, so hand-written suite files are never deleted.
+
+Authored by director dogfooding itself (planner+test-author: opus, executor: sonnet, via the
+  claude-code provider).
+
+Closes #2
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v0.4.0 (2026-06-25)
 
 ### Continuous Integration
