@@ -11,7 +11,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from director.opencode import _CLEAN_ENV, RunResult
+from director.runtime import _CLEAN_ENV, RunResult, register
 
 # --------------------------------------------------------------------------- #
 # system_prompt_for
@@ -267,3 +267,39 @@ def _collect_tool_entry(
     tool_calls.append((name, status))
     blob = json.dumps(record, default=str)[:2000].lower()
     tool_events.append({"name": name.lower(), "status": status, "blob": blob})
+
+
+# --------------------------------------------------------------------------- #
+# ClaudeCodeRuntime — Runtime protocol adapter
+# --------------------------------------------------------------------------- #
+
+
+class ClaudeCodeRuntime:
+    name = "claude-code"
+    providers = frozenset({"claude-code"})
+
+    def run(
+        self,
+        *,
+        agent: str,
+        model: str,
+        message: str,
+        cwd: str | Path,
+        log_path: str | Path,
+        timeout: int,
+    ) -> RunResult:
+        stripped_model = model.split("/", 1)[1] if "/" in model else model
+        return run_claude(
+            agent=agent,
+            model=stripped_model,
+            message=message,
+            cwd=cwd,
+            log_path=log_path,
+            timeout=timeout,
+        )
+
+    def system_prompt_for(self, agent: str) -> str | None:
+        return system_prompt_for(agent)
+
+
+register(ClaudeCodeRuntime())
