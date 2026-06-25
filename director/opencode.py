@@ -19,6 +19,11 @@ from pathlib import Path
 # changed-file count. Suppressing it at the source keeps every worktree clean.
 _CLEAN_ENV = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
 
+# A tier model string prefixed with this routes to the Claude Code runtime; the
+# remainder is the `claude --model` value (e.g. "claude-code/opus" → claude --model
+# opus). Everything else is an OpenCode "provider/model" string (the default).
+CLAUDE_PREFIX = "claude-code/"
+
 
 @dataclass
 class RunResult:
@@ -38,7 +43,7 @@ class RunResult:
         return self.returncode == 0 and self.error is None and not self.timed_out
 
 
-def run_agent(
+def _run_opencode(
     *,
     agent: str,
     model: str,
@@ -47,17 +52,11 @@ def run_agent(
     log_path: str | Path,
     timeout: int,
 ) -> RunResult:
-    """Invoke an OpenCode agent headlessly in `cwd`. NDJSON events go to
-    `log_path`; OpenCode logs go to `log_path + '.stderr'`. Never raises on a
-    model/agent failure — inspect RunResult.ok / .error / .timed_out."""
+    """Run the opencode CLI for a single agent invocation."""
     log_path = Path(log_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     err_path = log_path.with_suffix(log_path.suffix + ".stderr")
 
-    # --dir pins the project/worktree explicitly. Without it, `opencode run`
-    # resolves the project root by walking up for a .git and can land on an
-    # ENCLOSING repo (so edits leak out of an isolated worktree). Worktrees are
-    # also placed outside the repo tree (see run.py) to make this airtight.
     cmd = [
         "opencode",
         "run",
@@ -85,6 +84,40 @@ def run_agent(
             timed_out = True
 
     return _parse(log_path, rc, timed_out)
+
+
+def run_agent(
+    *,
+    agent: str,
+    model: str,
+    message: str,
+    cwd: str | Path,
+    log_path: str | Path,
+    timeout: int,
+) -> RunResult:
+    """Invoke an agent headlessly in `cwd`. The runtime is chosen by the `model`
+    string: a `claude-code/<model>` tier routes to the Claude Code runtime (with
+    the prefix stripped), anything else to OpenCode (the default). Never raises on
+    a failure — inspect RunResult.ok / .error / .timed_out."""
+    if model.startswith(CLAUDE_PREFIX):
+        from director.claudecode import run_claude
+
+        return run_claude(
+            agent=agent,
+            model=model[len(CLAUDE_PREFIX) :],
+            message=message,
+            cwd=cwd,
+            log_path=log_path,
+            timeout=timeout,
+        )
+    return _run_opencode(
+        agent=agent,
+        model=model,
+        message=message,
+        cwd=cwd,
+        log_path=log_path,
+        timeout=timeout,
+    )
 
 
 def _parse(log_path: Path, rc: int, timed_out: bool) -> RunResult:
