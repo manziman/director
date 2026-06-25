@@ -9,8 +9,13 @@
 # turn it into a zero-local-infra "cheap-cloud" setup or an "all-frontier" baseline.
 
 [tiers]
-# Roles bound to resolved OpenCode model strings ("provider/model"). Code, prompts,
-# and logs refer ONLY to these role names — never to a specific model.
+# Each role is bound to a "<provider>/<model>" string. The provider segment also
+# selects the agent runtime:
+#   - any OpenCode provider (lmstudio, openrouter, amazon-bedrock, …) → OpenCode (default)
+#   - "claude-code/<model>"  → the Claude Code CLI (`claude`); <model> is passed to
+#                              `claude --model` (e.g. "claude-code/opus", "claude-code/sonnet")
+# Mix freely per role — e.g. a claude-code planner alongside a local-opencode executor.
+# Code, prompts, and logs refer ONLY to role names — never to a specific model.
 planner     = "amazon-bedrock/us.anthropic.claude-opus-4-7"   # decomposition + DAG (use your strongest model)
 test_author = "amazon-bedrock/us.anthropic.claude-opus-4-7"   # tests are the contract → strongest
 executor    = "lmstudio/qwen3.6-27b-mtp"                      # implements each node. The cheap tier.
@@ -23,13 +28,7 @@ escalation  = "amazon-bedrock/anthropic.claude-sonnet-4-6"    # per-task fallbac
 #     executor = "openrouter/deepseek/deepseek-v4-pro"
 # all-frontier baseline (expensive control): set executor = reviewer = escalation
 #   to the same frontier model as the planner.
-
-# [runtime] maps each role name to its agent backend for execution. Valid values
-# are "opencode" (the default) and "claude-code". Any role not explicitly listed
-# defaults to "opencode". This lets a single run mix backends per role, so you can
-# drive certain roles through the claude CLI while others stay on opencode:
-#   planner  = "claude-code"   # drive this role via the `claude` CLI instead of opencode
-#   executor = "opencode"      # (default) other roles stay on opencode
+# Claude Code: e.g.  planner = "claude-code/opus"   (drive planning via the `claude` CLI)
 
 # Only needed if a tier above points at a local OpenAI-compatible endpoint.
 [providers.local]

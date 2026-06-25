@@ -21,39 +21,11 @@ os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from director.claudecode import (  # noqa: E402
-    _bare_model,
     _parse_claude,
     run_claude,
     system_prompt_for,
 )
 from director.opencode import RunResult  # noqa: E402
-
-
-# --------------------------------------------------------------------------- #
-# _bare_model
-# --------------------------------------------------------------------------- #
-class TestBareModel(unittest.TestCase):
-    def test_strips_first_provider_segment(self):
-        self.assertEqual(
-            _bare_model("openrouter/anthropic/claude-opus-4.8"),
-            "anthropic/claude-opus-4.8",
-        )
-
-    def test_strips_single_prefix(self):
-        self.assertEqual(_bare_model("anthropic/claude-opus-4-8"), "claude-opus-4-8")
-
-    def test_no_slash_returned_as_is(self):
-        self.assertEqual(_bare_model("claude-opus-4-8"), "claude-opus-4-8")
-
-    def test_only_first_slash_splits(self):
-        # split once on the FIRST slash only
-        self.assertEqual(
-            _bare_model("a/b/c/d"),
-            "b/c/d",
-        )
-
-    def test_empty_string(self):
-        self.assertEqual(_bare_model(""), "")
 
 
 # --------------------------------------------------------------------------- #
@@ -539,7 +511,7 @@ class TestRunClaude(unittest.TestCase):
             r = self._run(
                 factory,
                 agent="planner",
-                model="openrouter/anthropic/claude-opus-4.8",
+                model="opus",
                 message="do the thing",
                 cwd=d,
                 log_path=log_path,
@@ -552,9 +524,10 @@ class TestRunClaude(unittest.TestCase):
             self.assertIn("--output-format", cmd)
             self.assertIn("json", cmd)
             self.assertIn("--model", cmd)
-            # bare model (provider prefix stripped, split once on first /)
-            bare_idx = cmd.index("--model") + 1
-            self.assertEqual(cmd[bare_idx], "anthropic/claude-opus-4.8")
+            # run_claude receives the already-stripped model and passes it through;
+            # run_agent strips the "claude-code/" prefix upstream.
+            model_idx = cmd.index("--model") + 1
+            self.assertEqual(cmd[model_idx], "opus")
             self.assertIn("--append-system-prompt", cmd)
             body_idx = cmd.index("--append-system-prompt") + 1
             # body is the planner system prompt (frontmatter stripped)

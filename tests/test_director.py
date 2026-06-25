@@ -225,7 +225,7 @@ class RunMetricsTests(unittest.TestCase):
     def test_run_emits_metrics_and_records_watch_it_fail(self):
         import director.run as run
 
-        def fake_run_agent(*, agent, model, message, cwd, log_path, timeout, tier=None):
+        def fake_run_agent(*, agent, model, message, cwd, log_path, timeout):
             # write a correct implementation into the worktree
             (Path(cwd) / "mod.py").write_text("def add(a, b):\n    return a + b\n")
             Path(log_path).parent.mkdir(parents=True, exist_ok=True)

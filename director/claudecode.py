@@ -36,19 +36,6 @@ def system_prompt_for(agent: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# _bare_model
-# --------------------------------------------------------------------------- #
-
-
-def _bare_model(model: str) -> str:
-    """Drop the provider prefix (everything up to and including the first `/`)."""
-    idx = model.find("/")
-    if idx == -1:
-        return model
-    return model[idx + 1 :]
-
-
-# --------------------------------------------------------------------------- #
 # run_claude
 # --------------------------------------------------------------------------- #
 
@@ -74,7 +61,7 @@ def run_claude(
         "--output-format",
         "json",
         "--model",
-        _bare_model(model),
+        model,
         "--append-system-prompt",
         system_prompt_for(agent),
         "--dangerously-skip-permissions",

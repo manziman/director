@@ -27,7 +27,7 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from director import gitutil, opencode, setup
+from director import gitutil, setup
 from director.config import Config
 from director.cost import CostLedger
 from director.dag import topo_order, validate
@@ -209,7 +209,6 @@ def _recon(prog: PlanProgress, repo: Path, cfg: Config, ledger: CostLedger, logs
     ex = run_agent(
         agent="explorer",
         model=cfg.model_for("explorer"),
-        tier="explorer",
         message=_explorer_prompt(prog.task),
         cwd=repo,
         log_path=logs / f"{prog.job_id}-explorer.jsonl",
@@ -230,7 +229,6 @@ def _stage_a_spec(
     bs = run_agent(
         agent="brainstorm",
         model=cfg.model_for("planner"),
-        tier="planner",
         message=_brainstorm_prompt(prog.task, summary),
         cwd=repo,
         log_path=logs / f"{prog.job_id}-brainstorm.jsonl",
@@ -250,7 +248,6 @@ def _critique_spec(
     cr = run_agent(
         agent="brainstorm",
         model=cfg.model_for("planner"),
-        tier="planner",
         message=_spec_critique_prompt(prog.task, spec),
         cwd=repo,
         log_path=logs / f"{prog.job_id}-spec-critique.jsonl",
@@ -273,7 +270,6 @@ def _author_tests(plan: Plan, repo: Path, cfg: Config, ledger: CostLedger, logs:
         ta = run_agent(
             agent="test-author",
             model=cfg.model_for("test_author"),
-            tier="test_author",
             message=_testauthor_prompt(node),
             cwd=repo,
             log_path=logs / f"{plan.job_id}-tests-{node.id}.jsonl",
@@ -322,7 +318,6 @@ def _stage_bc_decompose(
     pl = run_agent(
         agent="planner",
         model=cfg.model_for("planner"),
-        tier="planner",
         message=_planner_prompt(spec, summary),
         cwd=repo,
         log_path=logs / f"{prog.job_id}-planner.jsonl",
@@ -349,7 +344,6 @@ def _critique_plan(
     cr = run_agent(
         agent="planner",
         model=cfg.model_for("planner"),
-        tier="planner",
         message=_plan_critique_prompt(spec, plan.to_json()),
         cwd=repo,
         log_path=logs / f"{prog.job_id}-plan-critique.jsonl",
@@ -390,7 +384,6 @@ def run_plan(
     cont: bool = False,
 ) -> PlanResult:
     repo = Path(repo).resolve()
-    opencode.set_runtime(dict(cfg.runtime))
     fdir = repo / ".director"
     logs = fdir / "logs"
     setup.ensure_director_gitignore(repo)  # never let `git add -A` commit .director runtime files

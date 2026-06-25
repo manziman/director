@@ -19,15 +19,10 @@ from pathlib import Path
 # changed-file count. Suppressing it at the source keeps every worktree clean.
 _CLEAN_ENV = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
 
-_RUNTIME: dict[str, str] = {}
-
-
-def set_runtime(mapping: dict[str, str]) -> None:
-    global _RUNTIME
-    _RUNTIME = {
-        role: (val if val in ("opencode", "claude-code") else "opencode")
-        for role, val in mapping.items()
-    }
+# A tier model string prefixed with this routes to the Claude Code runtime; the
+# remainder is the `claude --model` value (e.g. "claude-code/opus" → claude --model
+# opus). Everything else is an OpenCode "provider/model" string (the default).
+CLAUDE_PREFIX = "claude-code/"
 
 
 @dataclass
@@ -99,21 +94,17 @@ def run_agent(
     cwd: str | Path,
     log_path: str | Path,
     timeout: int,
-    tier: str | None = None,
 ) -> RunResult:
-    """Invoke an agent headlessly in `cwd`. The runtime backend is selected by
-    `tier` (the role whose model is being used) — NOT by `agent`, because agent
-    template names differ from role names (the `brainstorm`/`planner` agents both
-    run at the `planner` tier; the `executor` agent serves both the `executor` and
-    `escalation` tiers). `_RUNTIME` is keyed by role/tier. Never raises on a
-    failure — inspect RunResult.ok / .error / .timed_out."""
-    backend = _RUNTIME.get(tier, "opencode")
-    if backend == "claude-code":
+    """Invoke an agent headlessly in `cwd`. The runtime is chosen by the `model`
+    string: a `claude-code/<model>` tier routes to the Claude Code runtime (with
+    the prefix stripped), anything else to OpenCode (the default). Never raises on
+    a failure — inspect RunResult.ok / .error / .timed_out."""
+    if model.startswith(CLAUDE_PREFIX):
         from director.claudecode import run_claude
 
         return run_claude(
             agent=agent,
-            model=model,
+            model=model[len(CLAUDE_PREFIX) :],
             message=message,
             cwd=cwd,
             log_path=log_path,
