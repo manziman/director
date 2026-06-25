@@ -459,7 +459,7 @@ def run_plan(
             raise RuntimeError(f"branch {job_branch} already exists")
         gitutil.create_branch(job_branch, repo, base)
         gitutil.checkout(job_branch, repo)
-        sync_agents(repo)
+        sync_agents(repo, cfg)
         gitutil.commit_all(f"director: scaffold agents for job {job_id}", repo)
         _recon(prog, repo, cfg, ledger, logs, log)
 

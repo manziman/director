@@ -1,6 +1,6 @@
 # `director` — the orchestrator (Phase 2 + 2.5 + 3)
 
-A thin CLI that drives OpenCode headlessly to run the decomposition harness.
+A thin CLI that drives agent runtimes ([OpenCode](https://opencode.ai), Claude Code, …) to execute the decomposition harness.
 Stdlib-only (Python ≥ 3.11). The harness consumes configured OpenAI-compatible
 endpoints; it never manages providers.
 
@@ -13,7 +13,7 @@ director run [--repo .] [--parallel N] [--max-attempts K]
 director status [--repo .]
 director bench "<task>" --profiles all-frontier,cheap-cloud,local-first [--plan-profile P]
 director init [--repo .]                      # interactively create .director/config.toml (per-role models + gate commands)
-director sync-agents [--repo .]               # (re)install role agents into <repo>/.opencode (+ gitignore, starter opencode.json)
+director sync-agents [--repo .]               # (re)install role agents into <repo>/.opencode (+ gitignore, starter opencode.json) — only for OpenCode provider tiers
 ```
 
 ## Flow

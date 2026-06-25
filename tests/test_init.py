@@ -336,10 +336,17 @@ class RunInitTests(unittest.TestCase):
         for role in ROLES:
             self.assertEqual(cfg.tiers[role], f"prov/{role}")
         self.assertEqual(cfg.gates["test"], "pytest")
-        # a warning about unavailable/empty discovery should be printed.
-        self.assertTrue(
-            "opencode models" in out or "free-text" in out.lower(),
-            f"expected a discovery warning, got: {out!r}",
+        # warning must be provider-neutral: must mention free-text fallback and
+        # must NOT name any specific runtime command like "opencode".
+        self.assertIn(
+            "free-text",
+            out,
+            f"expected 'free-text' in discovery warning, got: {out!r}",
+        )
+        self.assertNotIn(
+            "opencode",
+            out,
+            f"'opencode' must not appear in the discovery warning, got: {out!r}",
         )
 
     def test_clobber_declined_does_not_overwrite(self):

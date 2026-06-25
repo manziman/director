@@ -1,15 +1,17 @@
-"""Acceptance tests for removing config.toml seeding from `director/setup.py`.
+"""Acceptance tests for the `setup-conditional-sync` node.
 
-These pin the contract for the `setup-remove-seeding` node: `sync_agents()` must
-still render the agent markdown, write a starter `opencode.json` (only if absent),
-and seed `.director/.gitignore` — but it must NO LONGER write or reference a
-`.director/config.toml`. The now-dead `_example_config()` helper and the
-`CONFIG_EXAMPLE` module constant must be gone, and the module docstring must no
-longer advertise config seeding.
+sync_agents(repo, cfg=None) is now config-aware: it renders .opencode/ only when
+an OpenCode-owned provider appears in the tiers. Tests that previously called the
+bare sync_agents(repo) and asserted .opencode/ exists have been migrated to pass an
+OpenCode-tier Config. The .director/.gitignore is always written regardless of config.
 
-No external boundaries are stubbed; `sync_agents` runs for real against a fresh
-temp repo and we inspect the resulting filesystem and the module's public surface.
+Pins retained from the previous node (setup-remove-seeding):
+- sync_agents never seeds .director/config.toml.
+- Dead code (_example_config, CONFIG_EXAMPLE) remains absent.
+- The module docstring still mentions 'agent' and omits 'config.toml' / 'ready-to-edit'.
 """
+
+from __future__ import annotations
 
 import os
 import pathlib
@@ -22,7 +24,22 @@ os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from director import setup
+from director.config import ROLES, Config
 from director.setup import AGENT_FILES
+
+
+def _opencode_cfg() -> Config:
+    """Construct a minimal Config with all roles bound to an OpenCode-owned provider."""
+    return Config(
+        path=Path("/dev/null"),
+        tiers=dict.fromkeys(ROLES, "anthropic/claude-3-5-sonnet"),
+        gates={},
+        pricing={},
+        limits={},
+        sampling={},
+        local={},
+        review={},
+    )
 
 
 class SyncAgentsNoSeedTests(unittest.TestCase):
@@ -30,7 +47,7 @@ class SyncAgentsNoSeedTests(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="fm-setup-noseed-"))
 
     def test_renders_every_agent_markdown(self):
-        setup.sync_agents(self.tmp)
+        setup.sync_agents(self.tmp, _opencode_cfg())
         agents_dir = self.tmp / ".opencode" / "agents"
         for name in AGENT_FILES:
             dest = agents_dir / name
@@ -38,35 +55,37 @@ class SyncAgentsNoSeedTests(unittest.TestCase):
             self.assertTrue(dest.read_text().strip(), f"empty agent file: {name}")
 
     def test_writes_starter_opencode_json(self):
-        setup.sync_agents(self.tmp)
+        setup.sync_agents(self.tmp, _opencode_cfg())
         oc = self.tmp / ".opencode" / "opencode.json"
         self.assertTrue(oc.is_file(), "starter opencode.json was not written")
 
     def test_writes_director_gitignore(self):
+        # .director/.gitignore is ALWAYS written regardless of config
         setup.sync_agents(self.tmp)
         gi = self.tmp / ".director" / ".gitignore"
         self.assertTrue(gi.is_file(), ".director/.gitignore was not written")
 
     def test_does_not_write_config_toml(self):
-        setup.sync_agents(self.tmp)
+        # Even with an OpenCode config, sync_agents must never seed config.toml
+        setup.sync_agents(self.tmp, _opencode_cfg())
         cfg = self.tmp / ".director" / "config.toml"
         self.assertFalse(cfg.exists(), ".director/config.toml must NOT be seeded")
 
     def test_returned_paths_do_not_reference_config_toml(self):
-        written = setup.sync_agents(self.tmp)
+        written = setup.sync_agents(self.tmp, _opencode_cfg())
         self.assertFalse(
             any("config.toml" in p for p in written),
             f"returned paths must not include config.toml; got {written!r}",
         )
 
     def test_returned_paths_include_agents_and_opencode_json(self):
-        written = setup.sync_agents(self.tmp)
+        written = setup.sync_agents(self.tmp, _opencode_cfg())
         for name in AGENT_FILES:
             self.assertIn(str(Path(".opencode") / "agents" / name), written)
         self.assertIn(str(Path(".opencode") / "opencode.json"), written)
 
     def test_returned_paths_are_repo_relative(self):
-        written = setup.sync_agents(self.tmp)
+        written = setup.sync_agents(self.tmp, _opencode_cfg())
         for p in written:
             self.assertFalse(Path(p).is_absolute(), f"expected repo-relative path, got {p!r}")
 
@@ -74,18 +93,18 @@ class SyncAgentsNoSeedTests(unittest.TestCase):
         oc = self.tmp / ".opencode" / "opencode.json"
         oc.parent.mkdir(parents=True)
         oc.write_text("ORIGINAL\n")
-        written = setup.sync_agents(self.tmp)
+        written = setup.sync_agents(self.tmp, _opencode_cfg())
         self.assertEqual(oc.read_text(), "ORIGINAL\n")
         self.assertNotIn(str(Path(".opencode") / "opencode.json"), written)
 
     def test_idempotent_still_no_config_toml(self):
-        setup.sync_agents(self.tmp)
-        setup.sync_agents(self.tmp)
+        setup.sync_agents(self.tmp, _opencode_cfg())
+        setup.sync_agents(self.tmp, _opencode_cfg())
         cfg = self.tmp / ".director" / "config.toml"
         self.assertFalse(cfg.exists(), ".director/config.toml must NOT appear on rerun")
 
     def test_accepts_str_repo_path(self):
-        setup.sync_agents(str(self.tmp))
+        setup.sync_agents(str(self.tmp), _opencode_cfg())
         cfg = self.tmp / ".director" / "config.toml"
         self.assertFalse(cfg.exists())
         self.assertTrue((self.tmp / ".opencode" / "agents" / AGENT_FILES[0]).is_file())
