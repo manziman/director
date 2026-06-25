@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "director-cli"
 dynamic = ["version"]
-description = "Model-agnostic decomposition coding harness — a thin orchestrator over OpenCode"
+description = "Model-agnostic decomposition coding harness that orchestrates agent runtimes (OpenCode, Claude Code) behind deterministic gates."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -13,7 +13,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "Christopher Manzi", email = "chris@minimus.tech" }]
 keywords = [
     "ai", "agents", "coding-agent", "llm", "orchestration", "decomposition",
-    "tdd", "opencode", "code-generation", "cli",
+    "tdd", "opencode", "claude-code", "code-generation", "cli",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

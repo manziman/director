@@ -74,7 +74,10 @@ def cmd_bench(args) -> int:
 
 def cmd_sync_agents(args) -> int:
     written = sync_agents(args.repo)
-    print("Synced:\n  " + "\n  ".join(written))
+    if not written:
+        print("No runtime-specific agent files needed (no OpenCode provider configured).")
+    else:
+        print("Synced:\n  " + "\n  ".join(written))
     return 0
 
 
@@ -155,13 +158,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pb.set_defaults(func=cmd_bench)
 
-    psa = sub.add_parser("sync-agents", help="(re)install role agents into <repo>/.opencode")
+    psa = sub.add_parser(
+        "sync-agents",
+        help="install role agents (writes <repo>/.opencode/ only when an OpenCode provider is configured)",
+    )
     psa.add_argument("--repo", default=".")
     psa.set_defaults(func=cmd_sync_agents)
 
     pi = sub.add_parser("init", help="interactively configure .director/config.toml")
     pi.add_argument("--repo", default=".")
     pi.set_defaults(func=cmd_init)
+
     return p
 
 

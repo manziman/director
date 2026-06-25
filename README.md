@@ -1,6 +1,6 @@
 # director
 
-**A model-agnostic decomposition coding harness — a thin orchestrator over [OpenCode](https://opencode.ai).**
+**A model-agnostic decomposition coding harness — a thin orchestrator over agent runtimes ([OpenCode](https://opencode.ai), Claude Code, …).**
 
 director tests one hypothesis:
 
@@ -13,7 +13,7 @@ director tests one hypothesis:
 It is **model-agnostic by construction**: roles (`planner`, `executor`, `reviewer`, …)
 bind to `provider/model` strings in config. Switching the executor from a local 27B to
 a frontier model — or anything in between — is a one-line config edit, never a code
-change. director drives OpenCode headlessly, so it inherits OpenCode's 75+ providers.
+change. When using an OpenCode-owned provider tier, director drives OpenCode headlessly and inherits its 75+ providers. Claude Code tiers use the Claude Code CLI.
 
 > **Status:** beta. Validated end-to-end (plan → run → bench) under local, cheap-cloud,
 > and all-frontier executor tiers.
@@ -39,12 +39,11 @@ director orchestrates other tools rather than replacing them, so it needs:
 
 - **Python ≥ 3.11**
 - **git** on `PATH` (isolation is real git worktrees + branches)
-- **[OpenCode](https://opencode.ai)** on `PATH` (the agent runtime director drives)
-- **Provider auth** configured in OpenCode (`opencode auth`): your planner/executor
-  model providers — e.g. Anthropic/Bedrock, OpenRouter, or a local OpenAI-compatible
-  endpoint such as LM Studio for the `local-first` profile.
+- **[OpenCode](https://opencode.ai)** on `PATH`, if you use an OpenCode-owned provider tier (anthropic, openai, google, bedrock, openrouter, lmstudio, …)
+- **Claude Code** (`claude`) on `PATH`, if you use a `claude-code/*` tier
+- **Provider auth**: if you use OpenCode tiers, configure auth in OpenCode via `opencode auth`; Claude Code tiers use the Claude Code CLI's own auth
 
-director never manages provider keys itself — that lives in your OpenCode config.
+director never manages provider keys itself — each runtime handles its own credentials.
 
 ---
 
@@ -53,15 +52,16 @@ director never manages provider keys itself — that lives in your OpenCode conf
 ```bash
 cd your-repo
 
-# 1. Install director's role agents (+ gitignore, starter opencode.json) into .opencode/
-director sync-agents
-
-# 2. Create .director/config.toml interactively — director init asks which model to
+# 1. Create .director/config.toml interactively — director init asks which model to
 #    use per role and what your gate commands are, then writes the config for you.
 director init
 #    (See director/config.example.toml for the full/advanced schema if you want to
 #     hand-tune beyond what init prompts for.)
 $EDITOR .director/config.toml
+
+# 2. Install director's role agents into .opencode/ (+ gitignore, starter opencode.json)
+#    — written only when an OpenCode provider tier is configured
+director sync-agents
 
 # 3. Plan: brainstorm → spec → test-gated task DAG (two approval gates)
 director plan "Add a --json flag to the export command"
@@ -96,7 +96,7 @@ director run
 | `director status` | Per-node progress, attempts, cost, and the executor-tier completion rate. |
 | `director bench "<task>" --profiles a,b,c` | Run the **same** task (same frozen acceptance tests) across profile variants and diff cost / quality / wall-time. |
 | `director init [--repo .]` | Interactively create `.director/config.toml` — asks which model to use per role and your gate commands. |
-| `director sync-agents` | (Re)install the role agents into `<repo>/.opencode` (plus a gitignore and a starter `opencode.json`). |
+| `director sync-agents` | (Re)install the role agents into `<repo>/.opencode/` (plus gitignore, starter `opencode.json`) — only when an OpenCode provider tier is configured. |
 
 All state lives under `.director/` (resumable, debuggable): `plan.json`, `state.json`,
 `costs.jsonl`, `metrics.jsonl`, per-call `logs/`, and `bench/`.

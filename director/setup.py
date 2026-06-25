@@ -1,19 +1,20 @@
 """Install Director's OpenCode agent definitions into a target repo.
 
-Director drives OpenCode with `--agent <role> --model <tier>`; the agent markdown
-supplies the role's system prompt + permissions, and the resolved tier model
-comes from config via `--model`. This module renders the bundled agent templates
-into <repo>/.opencode/agents/ (a.k.a. the `director sync-agents` step).
-
-Provider auth (Bedrock/OpenRouter keys, the LM Studio endpoint) is the operator's
-responsibility — it lives in the user's *global* OpenCode config. We add the
-project-local agent files, a starter opencode.json if the repo has none.
+Renders role agent prompts into .opencode/agents/ ONLY when an OpenCode-owned
+provider is configured (in the passed Config or on-disk configuration). With no
+config, a claude-code-only config, or a malformed config, only .director/.gitignore
+is written and nothing under .opencode/ is created. Provider auth remains the
+operator's responsibility in the user's global OpenCode config.
 """
 
 from __future__ import annotations
 
 import importlib.resources as ir
 from pathlib import Path
+
+from director import config
+from director.config import Config
+from director.opencode import OPENCODE_PROVIDERS
 
 AGENT_FILES = (
     "brainstorm.md",
@@ -45,6 +46,10 @@ worktrees/
 """
 
 
+def _opencode_selected(tiers: dict[str, str]) -> bool:
+    return any(tier.split("/", 1)[0] in OPENCODE_PROVIDERS for tier in tiers.values())
+
+
 def _template(name: str) -> str:
     return ir.files("director.agent_templates").joinpath(name).read_text()
 
@@ -62,11 +67,29 @@ def ensure_director_gitignore(repo: str | Path) -> None:
         gi.write_text(_DIRECTOR_GITIGNORE)
 
 
-def sync_agents(repo: str | Path) -> list[str]:
-    """Render agent_templates/*.md into <repo>/.opencode/agents/. Returns the
-    list of files written."""
+def sync_agents(repo: str | Path, cfg: Config | None = None) -> list[str]:
+    """Render agent templates into <repo>/.opencode/agents/ when an OpenCode-owned
+    provider is configured. Returns the list of repo-relative paths written."""
     repo = Path(repo)
     ensure_director_gitignore(repo)
+
+    # Resolve whether an OpenCode provider is selected.
+    if cfg is not None:
+        selected = _opencode_selected(cfg.tiers)
+    else:
+        toml_path = repo / ".director" / "config.toml"
+        if toml_path.exists():
+            try:
+                loaded = config.load_file(toml_path)
+                selected = _opencode_selected(loaded.tiers)
+            except Exception:
+                selected = False
+        else:
+            selected = False
+
+    if not selected:
+        return []
+
     agents_dir = repo / ".opencode" / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
     written = []

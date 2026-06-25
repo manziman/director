@@ -117,7 +117,7 @@ def run_init(repo: str) -> Path:
     models = discover_models()
     if not models:
         print(
-            "warning: `opencode models` was unavailable or returned no models; "
+            "warning: model discovery was unavailable or returned no models; "
             "falling back to free-text entry."
         )
 
