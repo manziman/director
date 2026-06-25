@@ -74,7 +74,7 @@ quote-style = "double"
 [tool.semantic_release]
 version_variables = ["director/__init__.py:__version__"]
 commit_parser = "conventional"
-build_command = "python -m build"
+build_command = "python -m pip install build && python -m build"
 commit_message = "chore(release): {version} [skip ci]\n\nAutomated release."
 tag_format = "v{version}"
 
