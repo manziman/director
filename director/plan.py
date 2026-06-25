@@ -259,7 +259,16 @@ def _critique_spec(
         log("[plan] spec revised by self-critique.")
 
 
-def _author_tests(plan: Plan, repo: Path, cfg: Config, ledger: CostLedger, logs: Path, log) -> None:
+def _author_tests(
+    plan: Plan,
+    repo: Path,
+    cfg: Config,
+    ledger: CostLedger,
+    logs: Path,
+    log,
+    *,
+    prev_tests: set[str] | None = None,
+) -> None:
     """Stage C: test-author writes per-node tests, commit, hash, verify red.
     Idempotent — safe to re-run after a plan revision (overwrites test files)."""
     for node in [plan.node(i) for i in topo_order(plan)]:
@@ -284,6 +293,13 @@ def _author_tests(plan: Plan, repo: Path, cfg: Config, ledger: CostLedger, logs:
         )
         if not ta.ok:
             raise RuntimeError(f"test-author failed on {node.id}: {ta.error or ta.returncode}")
+    current_tests = {t for n in plan.nodes for t in n.tests}
+    stale = (prev_tests or set()) - current_tests
+    for rel in sorted(stale):
+        tp = repo / rel
+        if tp.exists():
+            tp.unlink()
+            log(f"[plan] pruned stale test from a prior attempt: {rel}")
     gitutil.commit_all(f"director: acceptance tests for job {plan.job_id}", repo)
 
     # Hash the committed test files: the node gate refuses to pass if the executor
@@ -329,10 +345,19 @@ def _stage_bc_decompose(
 
     plan = _build_plan(_extract_json(pl.text), prog, repo)
     validate(plan)
-    (repo / ".director" / "plan.json").write_text(plan.to_json())
+    pj = repo / ".director" / "plan.json"
+    if pj.exists():
+        try:
+            prev_tests = {t for n in Plan.from_json(pj.read_text()).nodes for t in n.tests}
+        except Exception as e:
+            log(f"[plan] could not read prior plan.json for pruning: {e}")
+            prev_tests = set()
+    else:
+        prev_tests = set()
+    pj.write_text(plan.to_json())
     log(f"[plan] {len(plan.nodes)} nodes: {', '.join(n.id for n in plan.nodes)}")
 
-    _author_tests(plan, repo, cfg, ledger, logs, log)
+    _author_tests(plan, repo, cfg, ledger, logs, log, prev_tests=prev_tests)
     return plan
 
 
@@ -366,7 +391,8 @@ def _critique_plan(
     revised = _build_plan(data, prog, repo)
     validate(revised)
     (repo / ".director" / "plan.json").write_text(revised.to_json())
-    _author_tests(revised, repo, cfg, ledger, logs, log)
+    prev_tests = {t for n in plan.nodes for t in n.tests}
+    _author_tests(revised, repo, cfg, ledger, logs, log, prev_tests=prev_tests)
     return revised
 
 

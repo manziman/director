@@ -428,5 +428,289 @@ class DirectorGitignoreTests(unittest.TestCase):
         self.assertNotIn(".director/logs/a.jsonl", tracked)
 
 
+class PruneStaleDirectorTestsTests(unittest.TestCase):
+    """`director plan` re-run must prune director-authored test files that the
+    PRIOR plan referenced but the CURRENT plan no longer does — while never
+    touching hand-written suite files or files the current plan still claims.
+
+    Stubs director.plan.run_agent (the single external boundary), exactly as
+    RunMetricsTests stubs run.run_agent, and exercises the real prune logic
+    against a real temp git repo.
+    """
+
+    HANDWRITTEN = "tests/test_handwritten.py"
+    STALE = "tests/test_stale.py"
+    SHARED = "tests/test_shared.py"
+    CURRENT = "tests/test_current.py"
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="fm-prune-"))
+        init_repo(self.tmp)
+        self.fdir = self.tmp / ".director"
+        self.fdir.mkdir()
+        (self.fdir / "logs").mkdir()
+        (self.tmp / "tests").mkdir()
+        # A hand-written suite file (never in any DAG) plus the three plan-owned
+        # files: a prior-only "stale" file, a shared file in both plans, and the
+        # current file. All committed so a later deletion shows up in git.
+        for rel in (self.HANDWRITTEN, self.STALE, self.SHARED, self.CURRENT):
+            (self.tmp / rel).write_text("# placeholder test file\n")
+        (self.tmp / "tests" / "__init__.py").write_text("")
+        git(["add", "-A"], self.tmp)
+        git(["commit", "-qm", "seed test files"], self.tmp)
+        self.cfg = mk_config(self.tmp)
+        self.ledger_path = self.fdir / "costs.jsonl"
+
+    # -- helpers ----------------------------------------------------------- #
+    def _ledger(self):
+        from director.cost import CostLedger
+
+        return CostLedger(self.ledger_path)
+
+    def _ok_result(self, log_path):
+        Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(log_path).write_text("{}\n")
+        return RunResult(
+            returncode=0,
+            text="done",
+            tokens={"input": 10, "output": 5, "reasoning": 0, "total": 15},
+            cost_reported=0.0,
+            n_steps=1,
+            tool_calls=[],
+            tool_events=[],
+            error=None,
+            timed_out=False,
+            log_path=str(log_path),
+        )
+
+    def _current_plan(self):
+        """In-memory current plan: one node owning the CURRENT + SHARED tests."""
+        from director.models import Plan
+
+        node = Node(
+            id="current",
+            title="current",
+            spec="implement the thing",
+            files=["mod_current.py"],
+            depends_on=[],
+            test_cmd="false",  # nonzero == red, so no spurious warning
+            tests=[self.CURRENT, self.SHARED],
+            test_hashes={},
+        )
+        return Plan(
+            job_id="T",
+            task="t",
+            repo=str(self.tmp),
+            created_at="now",
+            job_branch="director/job-T",
+            nodes=[node],
+        )
+
+    def _prior_tests(self):
+        return {self.STALE, self.SHARED}
+
+    # -- direct _author_tests path ----------------------------------------- #
+    def test_author_tests_prunes_stale_keeps_handwritten_and_shared(self):
+        from director import plan as planmod
+
+        orig = planmod.run_agent
+        planmod.run_agent = lambda *, agent, model, message, cwd, log_path, timeout: (
+            self._ok_result(log_path)
+        )
+        try:
+            planmod._author_tests(
+                self._current_plan(),
+                self.tmp,
+                self.cfg,
+                self._ledger(),
+                self.fdir / "logs",
+                lambda m: None,
+                prev_tests=self._prior_tests(),
+            )
+        finally:
+            planmod.run_agent = orig
+
+        # (a) the stale prior-attempt file is deleted from disk
+        self.assertFalse((self.tmp / self.STALE).exists())
+        # (b) the hand-written suite file is untouched
+        self.assertTrue((self.tmp / self.HANDWRITTEN).exists())
+        # (c) a file referenced by BOTH prior and current plans survives
+        self.assertTrue((self.tmp / self.SHARED).exists())
+        # the current file the new plan owns is still present
+        self.assertTrue((self.tmp / self.CURRENT).exists())
+
+    def test_author_tests_none_prev_prunes_nothing(self):
+        """The prev_tests=None default makes pruning a no-op."""
+        from director import plan as planmod
+
+        orig = planmod.run_agent
+        planmod.run_agent = lambda *, agent, model, message, cwd, log_path, timeout: (
+            self._ok_result(log_path)
+        )
+        try:
+            planmod._author_tests(
+                self._current_plan(),
+                self.tmp,
+                self.cfg,
+                self._ledger(),
+                self.fdir / "logs",
+                lambda m: None,
+            )
+        finally:
+            planmod.run_agent = orig
+
+        for rel in (self.HANDWRITTEN, self.STALE, self.SHARED, self.CURRENT):
+            self.assertTrue((self.tmp / rel).exists(), f"{rel} must survive")
+
+    def test_author_tests_missing_stale_file_is_silent_noop(self):
+        """A stale path already gone from disk must not raise."""
+        from director import plan as planmod
+
+        (self.tmp / self.STALE).unlink()  # gone before the prune runs
+        orig = planmod.run_agent
+        planmod.run_agent = lambda *, agent, model, message, cwd, log_path, timeout: (
+            self._ok_result(log_path)
+        )
+        try:
+            planmod._author_tests(
+                self._current_plan(),
+                self.tmp,
+                self.cfg,
+                self._ledger(),
+                self.fdir / "logs",
+                lambda m: None,
+                prev_tests=self._prior_tests(),
+            )
+        finally:
+            planmod.run_agent = orig
+        self.assertFalse((self.tmp / self.STALE).exists())
+        self.assertTrue((self.tmp / self.SHARED).exists())
+
+    # -- decompose path (reads prior plan.json from disk) ------------------ #
+    def _planner_json(self):
+        return json.dumps(
+            {
+                "nodes": [
+                    {
+                        "id": "current",
+                        "title": "current",
+                        "spec": "implement the thing",
+                        "files": ["mod_current.py"],
+                        "depends_on": [],
+                        "test_cmd": "false",
+                        "tests": [self.CURRENT, self.SHARED],
+                        "estimated_difficulty": "easy",
+                    }
+                ]
+            }
+        )
+
+    def _fake_agent(self):
+        def fake(*, agent, model, message, cwd, log_path, timeout):
+            res = self._ok_result(log_path)
+            if agent == "planner":
+                res.text = self._planner_json()
+            return res
+
+        return fake
+
+    def _write_prior_plan(self):
+        prior = {
+            "job_id": "T",
+            "task": "t",
+            "repo": str(self.tmp),
+            "created_at": "now",
+            "job_branch": "director/job-T",
+            "nodes": [
+                {
+                    "id": "old",
+                    "title": "old",
+                    "spec": "old work",
+                    "files": ["mod_old.py"],
+                    "depends_on": [],
+                    "test_cmd": "false",
+                    "tests": [self.STALE, self.SHARED],
+                    "estimated_difficulty": "easy",
+                    "test_hashes": {},
+                }
+            ],
+        }
+        (self.fdir / "plan.json").write_text(json.dumps(prior))
+
+    def _prog(self):
+        from director.plan import PlanProgress
+
+        return PlanProgress(
+            job_id="T",
+            task="t",
+            job_branch="director/job-T",
+            stage="decompose",
+            auto=True,
+            critique=False,
+        )
+
+    def test_decompose_prunes_stale_and_commits_deletion(self):
+        from director import plan as planmod
+
+        self._write_prior_plan()
+        (self.fdir / "spec.md").write_text("# Spec\n")
+        orig = planmod.run_agent
+        planmod.run_agent = self._fake_agent()
+        try:
+            planmod._stage_bc_decompose(
+                self._prog(), self.tmp, self.cfg, self._ledger(), self.fdir / "logs", lambda m: None
+            )
+        finally:
+            planmod.run_agent = orig
+
+        # stale file pruned from disk and from git tracking
+        self.assertFalse((self.tmp / self.STALE).exists())
+        tracked = gitutil.git(["ls-files"], self.tmp).stdout.splitlines()
+        self.assertNotIn(self.STALE, tracked)
+        # (e) the deletion is reflected in the commit director just made
+        head = gitutil.git(["show", "--name-status", "HEAD"], self.tmp).stdout
+        self.assertIn(self.STALE, head)
+        self.assertIn("D", head.split(self.STALE)[0].splitlines()[-1])
+        # hand-written + shared + current all survive
+        self.assertTrue((self.tmp / self.HANDWRITTEN).exists())
+        self.assertTrue((self.tmp / self.SHARED).exists())
+        self.assertTrue((self.tmp / self.CURRENT).exists())
+
+    def test_decompose_no_prior_plan_prunes_nothing(self):
+        from director import plan as planmod
+
+        # (d) no prior plan.json on disk → nothing is deleted
+        self.assertFalse((self.fdir / "plan.json").exists())
+        (self.fdir / "spec.md").write_text("# Spec\n")
+        orig = planmod.run_agent
+        planmod.run_agent = self._fake_agent()
+        try:
+            planmod._stage_bc_decompose(
+                self._prog(), self.tmp, self.cfg, self._ledger(), self.fdir / "logs", lambda m: None
+            )
+        finally:
+            planmod.run_agent = orig
+
+        for rel in (self.HANDWRITTEN, self.STALE, self.SHARED, self.CURRENT):
+            self.assertTrue((self.tmp / rel).exists(), f"{rel} must survive")
+
+    def test_decompose_corrupt_prior_plan_does_not_raise(self):
+        from director import plan as planmod
+
+        # an unparseable prior plan.json must yield prev_tests=set(), not an error
+        (self.fdir / "plan.json").write_text("{ not valid json")
+        (self.fdir / "spec.md").write_text("# Spec\n")
+        orig = planmod.run_agent
+        planmod.run_agent = self._fake_agent()
+        try:
+            planmod._stage_bc_decompose(
+                self._prog(), self.tmp, self.cfg, self._ledger(), self.fdir / "logs", lambda m: None
+            )
+        finally:
+            planmod.run_agent = orig
+        # nothing pruned (no usable prior tests) and the stale file remains
+        self.assertTrue((self.tmp / self.STALE).exists())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
