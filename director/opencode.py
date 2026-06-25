@@ -1,46 +1,107 @@
-"""Headless OpenCode driver.
+"""Headless OpenCode dispatch entrypoint.
 
-Wraps `opencode run --agent <role> --model <provider/model> --format json` and
-parses the NDJSON event stream into a structured result (assistant text + token
-usage + tool activity). This is the ONLY place that shells out to OpenCode.
+Resolves a runtime via the registry and delegates agent invocation to it.
+Re-exports RunResult, _CLEAN_ENV, and runtime_for_model from director.runtime
+for backward compatibility with existing import paths.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
-# Director-spawned processes (and the test commands they run) must not litter the
-# worktree with Python bytecode: a stray `__pycache__/*.pyc` would otherwise get
-# `git add -A`-ed into a node commit, poison later merges, and inflate the
-# changed-file count. Suppressing it at the source keeps every worktree clean.
-_CLEAN_ENV = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+import director.claudecode  # noqa: F401 — ensures ClaudeCodeRuntime registers
+from director.runtime import (
+    _CLEAN_ENV,
+    _REGISTRY,
+    RunResult,
+    register,
+    runtime_for_model,
+)
 
-# A tier model string prefixed with this routes to the Claude Code runtime; the
-# remainder is the `claude --model` value (e.g. "claude-code/opus" → claude --model
-# opus). Everything else is an OpenCode "provider/model" string (the default).
-CLAUDE_PREFIX = "claude-code/"
+# --------------------------------------------------------------------------- #
+# OPENCODE_PROVIDERS — curated provider segments for OpenCode-owned dispatch
+# --------------------------------------------------------------------------- #
+
+OPENCODE_PROVIDERS: frozenset[str] = frozenset(
+    {
+        "anthropic",
+        "openai",
+        "google",
+        "google-vertex",
+        "amazon-bedrock",
+        "azure",
+        "openrouter",
+        "lmstudio",
+        "deepseek",
+        "groq",
+        "mistral",
+        "togetherai",
+        "fireworks",
+        "xai",
+        "perplexity",
+        "cohere",
+        "cerebras",
+        "deepinfra",
+        "huggingface",
+        "ollama",
+        "github-copilot",
+        "github-models",
+        "requesty",
+        "v0",
+        "inception",
+        "morph",
+        "upstage",
+        "baseten",
+        "nebius",
+        "sambanova",
+        "alibaba",
+        "openai-compatible",
+        "llama",
+    }
+)
 
 
-@dataclass
-class RunResult:
-    returncode: int
-    text: str  # concatenated assistant text (e.g. planner JSON)
-    tokens: dict  # summed across steps: {input, output, reasoning, total}
-    cost_reported: float  # OpenCode's own cost sum (cross-check; often 0 locally)
-    n_steps: int
-    tool_calls: list[tuple[str, str]] = field(default_factory=list)  # (tool, status)
-    tool_events: list[dict] = field(default_factory=list)  # ordered {name,status,blob}
-    error: str | None = None
-    timed_out: bool = False
-    log_path: str = ""
+# --------------------------------------------------------------------------- #
+# OpenCodeRuntime — Runtime protocol adapter for OpenCode CLI
+# --------------------------------------------------------------------------- #
 
-    @property
-    def ok(self) -> bool:
-        return self.returncode == 0 and self.error is None and not self.timed_out
+
+class OpenCodeRuntime:
+    name = "opencode"
+    providers = OPENCODE_PROVIDERS
+
+    def run(
+        self,
+        *,
+        agent: str,
+        model: str,
+        message: str,
+        cwd: str | Path,
+        log_path: str | Path,
+        timeout: int,
+    ) -> RunResult:
+        return _run_opencode(
+            agent=agent,
+            model=model,
+            message=message,
+            cwd=cwd,
+            log_path=log_path,
+            timeout=timeout,
+        )
+
+    def system_prompt_for(self, agent: str) -> str | None:
+        return None
+
+
+register(OpenCodeRuntime())
+
+
+# --------------------------------------------------------------------------- #
+# _run_opencode — CLI driver (called by bare name for monkeypatchability)
+# --------------------------------------------------------------------------- #
 
 
 def _run_opencode(
@@ -86,6 +147,11 @@ def _run_opencode(
     return _parse(log_path, rc, timed_out)
 
 
+# --------------------------------------------------------------------------- #
+# run_agent — public dispatch entrypoint (registry-based)
+# --------------------------------------------------------------------------- #
+
+
 def run_agent(
     *,
     agent: str,
@@ -95,22 +161,22 @@ def run_agent(
     log_path: str | Path,
     timeout: int,
 ) -> RunResult:
-    """Invoke an agent headlessly in `cwd`. The runtime is chosen by the `model`
-    string: a `claude-code/<model>` tier routes to the Claude Code runtime (with
-    the prefix stripped), anything else to OpenCode (the default). Never raises on
-    a failure — inspect RunResult.ok / .error / .timed_out."""
-    if model.startswith(CLAUDE_PREFIX):
-        from director.claudecode import run_claude
-
-        return run_claude(
-            agent=agent,
-            model=model[len(CLAUDE_PREFIX) :],
-            message=message,
-            cwd=cwd,
-            log_path=log_path,
-            timeout=timeout,
+    """Invoke an agent headlessly in `cwd`. The runtime is resolved from the
+    registry by provider segment (first path component of `model`). Never raises
+    on failure — inspect RunResult.ok / .error / .timed_out."""
+    rt_entry = runtime_for_model(model)
+    if rt_entry is None:
+        provider = model.split("/", 1)[0]
+        known = "; ".join(
+            f"{r.name}: {sorted(r.providers)}" for r in dict.fromkeys(_REGISTRY.values())
         )
-    return _run_opencode(
+        return RunResult(
+            returncode=2,
+            error=f"unknown provider {provider!r} in tier {model!r}: no runtime registered (known runtimes — {known})",
+            timed_out=False,
+            log_path=str(log_path),
+        )
+    return rt_entry.run(
         agent=agent,
         model=model,
         message=message,
@@ -118,6 +184,11 @@ def run_agent(
         log_path=log_path,
         timeout=timeout,
     )
+
+
+# --------------------------------------------------------------------------- #
+# _parse — NDJSON event stream parser (unchanged)
+# --------------------------------------------------------------------------- #
 
 
 def _parse(log_path: Path, rc: int, timed_out: bool) -> RunResult:
@@ -152,13 +223,9 @@ def _parse(log_path: Path, rc: int, timed_out: bool) -> RunResult:
             name = part.get("tool", "?")
             status = (part.get("state", {}) or {}).get("status", "?")
             tool_calls.append((name, status))
-            # keep an ordered, capped content blob per tool event so the
-            # watch-it-fail analyzer can tell a test run from a file edit and spot
-            # a failure in the command output (shape-tolerant: just stringify part).
             blob = json.dumps(part, default=str)[:2000].lower()
             tool_events.append({"name": str(name).lower(), "status": str(status), "blob": blob})
         elif etype in ("error", "invalid_request_error") or "error" in (etype or ""):
-            # error events may be at top level (evt["error"]) or in part
             msg = evt.get("error") or part.get("error") or part.get("message") or etype
             error = str(msg)
 
@@ -182,8 +249,7 @@ def _parse(log_path: Path, rc: int, timed_out: bool) -> RunResult:
 # --------------------------------------------------------------------------- #
 # watch-it-fail transcript verification (Phase 3)
 # --------------------------------------------------------------------------- #
-# Tool-name fragments. OpenCode names vary by provider/model, so match on
-# substrings rather than exact names.
+
 _EDIT_TOOLS = ("edit", "write", "patch", "create", "apply", "str_replace")
 _SHELL_TOOLS = ("bash", "shell", "run", "execute", "terminal", "command")
 _TEST_SIGNALS = ("pytest", "unittest", "test", "vitest", "jest", "go test", "cargo test")
@@ -223,7 +289,6 @@ def _is_shell(name: str) -> bool:
 def _looks_like_test(blob: str, test_cmd: str) -> bool:
     if any(s in blob for s in _TEST_SIGNALS):
         return True
-    # also match a distinctive token from the configured test command
     _skip = ("python", "python3", "-m", "discover", "&&")
     for tok in test_cmd.lower().replace("/", " ").replace(".", " ").split():
         if len(tok) > 3 and tok not in _skip and tok in blob:
@@ -256,9 +321,7 @@ def watch_it_fail(events: list[dict], test_cmd: str) -> WatchItFail:
                 "ran tests before first edit" + (" (saw failure)" if saw_failure else ""),
             )
         if _is_edit(name):
-            # an edit happened before any test run → watch-it-fail not honored
             return WatchItFail("not_observed", False, False, "edited before running any tests")
-    # tools ran but none matched a test command or an edit
     return WatchItFail(
         "unknown", saw_test, saw_failure, "no test run or edit detected among tool calls"
     )
