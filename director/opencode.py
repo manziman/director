@@ -95,6 +95,24 @@ class OpenCodeRuntime:
     def system_prompt_for(self, agent: str) -> str | None:
         return None
 
+    def discover_models(self) -> list[str]:
+        try:
+            proc = subprocess.run(
+                ["opencode", "models"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=True,
+            )
+            result = []
+            for raw in proc.stdout.splitlines():
+                stripped = raw.strip()
+                if stripped and "/" in stripped:
+                    result.append(stripped)
+            return result
+        except Exception:
+            return []
+
 
 register(OpenCodeRuntime())
 

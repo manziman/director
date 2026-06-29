@@ -53,8 +53,9 @@ lint      = "ruff check ."
 typecheck = "mypy ."
 
 # Per-resolved-model pricing for cost accounting ($ / 1M tokens). Local = $0.
-# Fill these from your provider's current price sheet; any model not listed is
-# counted at $0.
+# Pricing is keyed by the same "<provider>/<model>" tier string used in [tiers].
+# Fill these from your provider's current price sheet; any model not listed here
+# is counted at $0 (cost reports read zero — not estimated — for unlisted models).
 [pricing."lmstudio/qwen3.6-27b-mtp"]
 input = 0.0
 output = 0.0
@@ -64,6 +65,15 @@ output = 75.0
 [pricing."amazon-bedrock/anthropic.claude-sonnet-4-6"]
 input = 3.0
 output = 15.0
+[pricing."claude-code/opus"]
+input = 15.0
+output = 75.0
+[pricing."claude-code/sonnet"]
+input = 3.0
+output = 15.0
+[pricing."claude-code/haiku"]
+input = 0.25
+output = 1.25
 
 [limits]
 node_timeout_secs = 900      # per model/gate call (15 min)

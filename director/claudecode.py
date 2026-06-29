@@ -13,6 +13,11 @@ from pathlib import Path
 
 from director.runtime import _CLEAN_ENV, RunResult, register
 
+# Best-effort list of stable `claude --model` aliases.  Not authoritative;
+# the `claude` CLI has no "list models" command.
+CLAUDE_CODE_MODELS = ("opus", "sonnet", "haiku")
+
+
 # --------------------------------------------------------------------------- #
 # system_prompt_for
 # --------------------------------------------------------------------------- #
@@ -300,6 +305,9 @@ class ClaudeCodeRuntime:
 
     def system_prompt_for(self, agent: str) -> str | None:
         return system_prompt_for(agent)
+
+    def discover_models(self) -> list[str]:
+        return [f"claude-code/{m}" for m in CLAUDE_CODE_MODELS]
 
 
 register(ClaudeCodeRuntime())

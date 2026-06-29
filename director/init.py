@@ -1,18 +1,18 @@
 """Interactive `director init`: discover models, prompt for tiers/gates, render TOML.
 
 This module wires the interactive `director init` flow. It discovers available
-models by shelling out to `opencode models`, prompts the user to bind each role
-to a model (or falls back to free-text entry when discovery is unavailable),
-prompts for the deterministic gate commands, and renders a minimal
-`.director/config.toml`. The renderer is pure and its output round-trips through
-`director.config.load_file`.
+models by iterating registered runtimes and collecting their tier strings,
+prompts the user to bind each role to a model (or falls back to free-text entry
+when discovery is unavailable), prompts for the deterministic gate commands,
+and renders a minimal `.director/config.toml`. The renderer is pure and its
+output round-trips through `director.config.load_file`.
 """
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
+import director.runtime as runtime
 from director.config import ROLES
 
 
@@ -38,19 +38,15 @@ def parse_models(text: str) -> list[str]:
 
 
 def discover_models() -> list[str]:
-    """Run `opencode models` and parse its output; return [] on any failure."""
-    try:
-        result = subprocess.run(
-            ["opencode", "models"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except FileNotFoundError:
-        return []
-    if result.returncode != 0:
-        return []
-    return parse_models(result.stdout)
+    """Union of all registered runtimes' discover_models(), deduped in registration order."""
+    seen: set[str] = set()
+    result: list[str] = []
+    for rt in runtime.runtimes():
+        for tier in rt.discover_models():
+            if tier not in seen:
+                seen.add(tier)
+                result.append(tier)
+    return result
 
 
 def prompt_model(role: str, models: list[str]) -> str:
