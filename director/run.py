@@ -84,7 +84,8 @@ def _executor_message(node: Node, worktree: Path, feedback: str) -> str:
 def _run_shell(cmd: str, cwd: Path, timeout: int) -> str:
     import os
 
-    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}  # keep the worktree clean
+    env = {**os.environ}  # byproducts handled by gate's ignore matcher
+    env.pop("PYTHONDONTWRITEBYTECODE", None)
     p = subprocess.run(
         cmd, cwd=str(cwd), shell=True, capture_output=True, text=True, timeout=timeout, env=env
     )

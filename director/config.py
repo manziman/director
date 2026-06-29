@@ -8,7 +8,7 @@ switching executor models is a config edit, never a code change.
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 ROLES = ("planner", "test_author", "executor", "explorer", "reviewer", "escalation")
@@ -24,6 +24,9 @@ class Config:
     sampling: dict  # role -> {temperature, top_p, top_k}
     local: dict  # providers.local: base_url, api_key
     review: dict  # two-stage review knobs (Phase 2.5)
+    # Optional declared target stack; currently declaration-only (available on Config);
+    # recon remains the primary signal to the planner.
+    target: dict = field(default_factory=dict)
 
     # --- convenience resolvers ----------------------------------------------
     def model_for(self, role: str) -> str:
@@ -71,6 +74,19 @@ class Config:
     def stage_two_enabled(self) -> bool:
         return bool(self.review.get("stage_two", True))
 
+    # --- target convenience properties --------------------------------------
+    @property
+    def target_language(self):
+        return self.target.get("language") or None
+
+    @property
+    def target_test_framework(self):
+        return self.target.get("test_framework") or None
+
+    @property
+    def target_toolchain(self):
+        return self.target.get("toolchain") or None
+
 
 def load(repo: Path) -> Config:
     """Load the active config from <repo>/.director/config.toml."""
@@ -107,4 +123,5 @@ def load_file(path: Path) -> Config:
         sampling=data.get("sampling", {}),
         local=data.get("providers", {}).get("local", {}),
         review=data.get("review", {}),
+        target=data.get("target", {}),
     )

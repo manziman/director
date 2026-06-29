@@ -21,7 +21,7 @@ from pathlib import Path
 
 from director import gitutil
 from director.config import Config
-from director.gates import _is_ignorable
+from director.gates import build_ignore_matcher
 from director.models import Node
 from director.opencode import run_agent
 
@@ -72,10 +72,10 @@ def _should_run_stage_two(node: Node, worktree: Path, cfg: Config, escalated: bo
         return False
     if escalated:
         return True
-    # count only real source changes — ephemeral build noise (__pycache__/*.pyc,
-    # created by running the tests) must not inflate the file count past the
-    # threshold and trip stage two on a one-file diff.
-    n_changed = sum(1 for p in gitutil.changed_paths(worktree) if not _is_ignorable(p))
+    # count only real source changes — ignore build byproducts so they don't
+    # inflate the file count past the threshold and trip stage two.
+    match = build_ignore_matcher(worktree, cfg)
+    n_changed = sum(1 for p in gitutil.changed_paths(worktree) if not match(p))
     return n_changed > cfg.stage_two_file_threshold
 
 

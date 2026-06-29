@@ -307,7 +307,8 @@ def _is_shell(name: str) -> bool:
 def _looks_like_test(blob: str, test_cmd: str) -> bool:
     if any(s in blob for s in _TEST_SIGNALS):
         return True
-    _skip = ("python", "python3", "-m", "discover", "&&")
+    # Stack-neutral generic noise tokens (not language-specific binaries)
+    _skip = ("-m", "discover", "&&")
     for tok in test_cmd.lower().replace("/", " ").replace(".", " ").split():
         if len(tok) > 3 and tok not in _skip and tok in blob:
             return True

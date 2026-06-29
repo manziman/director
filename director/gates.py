@@ -13,9 +13,11 @@ red until their own node executes.
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import os
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -23,8 +25,10 @@ from director import gitutil
 from director.config import Config
 from director.models import Node
 
-# Don't let gate test runs write .pyc into the worktree (see opencode._CLEAN_ENV).
-_CLEAN_ENV = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+# Byproducts are now handled by the ignore matcher (build_ignore_matcher), not by
+# suppressing bytecode generation. _CLEAN_ENV is kept for other env customisation.
+_CLEAN_ENV = {**os.environ}
+_CLEAN_ENV.pop("PYTHONDONTWRITEBYTECODE", None)
 
 
 @dataclass
@@ -34,19 +38,73 @@ class GateResult:
     detail: str = ""
 
 
-# Ephemeral build/test byproducts that are never source and must not count as
-# out-of-scope edits. Running the tests (which the executor is told to do) creates
-# `__pycache__/*.pyc`; without this filter the allowlist gate rejects every node
-# whose repo doesn't already .gitignore them — a node can then never pass.
-_IGNORABLE_DIRS = ("__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache")
-_IGNORABLE_SUFFIXES = (".pyc", ".pyo")
+# Dogfood / last-resort safety net so director's own Python byproducts stay clean
+# even if a target's .gitignore is incomplete. Real cross-stack generality comes
+# from .gitignore-derivation + the [gates].ignore config key.
+DEFAULT_IGNORE: tuple[str, ...] = (
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "*.pyc",
+    "*.pyo",
+)
 
 
-def _is_ignorable(path: str) -> bool:
-    p = path.replace("\\", "/")
-    if p.endswith(_IGNORABLE_SUFFIXES):
-        return True
-    return any(d in p.split("/") for d in _IGNORABLE_DIRS)
+def _read_gitignore(worktree: Path) -> list[str]:
+    """Read worktree/.gitignore and return cleaned pattern list."""
+    try:
+        lines = (worktree / ".gitignore").read_text().splitlines()
+    except OSError:
+        return []
+
+    patterns: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            continue
+        if stripped.startswith("!"):
+            continue
+        # Strip single leading / and single trailing /
+        p = stripped
+        if p.startswith("/"):
+            p = p[1:]
+        if p.endswith("/"):
+            p = p[:-1]
+        if p:
+            patterns.append(p)
+    return patterns
+
+
+def build_ignore_matcher(worktree: Path, cfg: Config) -> Callable[[str], bool]:
+    """Assemble ONE pattern list and return a closure that matches paths."""
+    patterns = list(DEFAULT_IGNORE)
+
+    # Config [gates].ignore patterns
+    raw = cfg.gates.get("ignore", [])
+    if isinstance(raw, list):
+        patterns.extend(p for p in raw if isinstance(p, str))
+
+    # .gitignore-derived patterns
+    patterns.extend(_read_gitignore(worktree))
+
+    def match(path: str) -> bool:
+        basename = path.rsplit("/", 1)[-1]
+        segments = path.split("/")
+        for pat in patterns:
+            if "/" in pat:
+                if fnmatch.fnmatch(path, pat):
+                    return True
+            else:
+                if fnmatch.fnmatch(basename, pat):
+                    return True
+                if pat in segments:
+                    return True
+        return False
+
+    return match
 
 
 def _run(cmd: str, cwd: Path, timeout: int) -> tuple[int, str]:
@@ -104,7 +162,8 @@ def node_gate(node: Node, worktree: Path, cfg: Config) -> GateResult:
     # to them shows as out-of-scope and is rejected here)
     allowed = set(node.files)
     changed = gitutil.changed_paths(worktree)
-    out_of_scope = [p for p in changed if p not in allowed and not _is_ignorable(p)]
+    match = build_ignore_matcher(worktree, cfg)
+    out_of_scope = [p for p in changed if p not in allowed and not match(p)]
     if out_of_scope:
         failures.append("out-of-scope edits")
         detail.append(
