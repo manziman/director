@@ -1,6 +1,43 @@
 # CHANGELOG
 
 
+## v0.6.0 (2026-06-29)
+
+### Features
+
+- Language/toolchain-agnostic byproduct filtering and optional target stack
+  ([#19](https://github.com/manziman/director/pull/19),
+  [`201c284`](https://github.com/manziman/director/commit/201c284218be349c0bf69385c566ef10f111f4d4))
+
+director hardcoded Python toolchain assumptions in the allowlist gate, the subprocess env, the
+  watch-it-fail analyzer, prompt templates, and config examples. This makes them language-neutral
+  and lets the target stack be declared.
+
+- gates.py derives ignorable build byproducts generically: the union of a small DEFAULT_IGNORE
+  safety net, a new [gates].ignore config key, and the TARGET repo's own .gitignore (pragmatic
+  fnmatch matcher; negation lines skipped so it can only ever widen what is ignorable). A non-Python
+  target's byproducts (node_modules/, target/, *.class, …) are now filtered while genuine
+  out-of-scope edits are still rejected (every source is a byproduct allowlist). -
+  PYTHONDONTWRITEBYTECODE is dropped from the subprocess env in runtime.py, gates.py, run.py, and
+  plan.py; the _CLEAN_ENV symbol is kept (redefined as a plain env copy) to preserve the import
+  surface. The generic byproduct filter now handles the .pyc problem that env var papered over, so
+  this repo's .gitignore gains .pytest_cache/.mypy_cache/.ruff_cache to keep director's own dogfood
+  gates clean under the new mechanism. - Config gains an optional [target] table
+  (language/test_framework/toolchain), exposed as
+  target_language/target_test_framework/target_toolchain properties; backward-compatible (absent ->
+  {}). Declaration-first: recon stays the primary stack signal and no code path is forced to consume
+  it yet. - watch_it_fail's skip-list drops the python/python3 binary names (unittest stays matched
+  via _TEST_SIGNALS, preserving the Python case); the planner/test-author templates drop hardcoded
+  .py example filenames while keeping the "match the repo's stack/test framework" steer;
+  config.example.toml frames its gate commands as stack-specific examples.
+
+Test fixtures cover non-Python stacks. Full suite green (566 tests); ruff clean. Stdlib only.
+
+Closes #12. Part of #8.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v0.5.0 (2026-06-29)
 
 ### Continuous Integration
