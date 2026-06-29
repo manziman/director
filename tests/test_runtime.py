@@ -105,12 +105,16 @@ class TestCleanEnv(unittest.TestCase):
     def test_is_dict(self):
         self.assertIsInstance(rt._CLEAN_ENV, dict)
 
-    def test_has_pythondontwritebytecode_one(self):
-        self.assertEqual(rt._CLEAN_ENV.get("PYTHONDONTWRITEBYTECODE"), "1")
+    def test_pythondontwritebytecode_absent(self):
+        """PYTHONDONTWRITEBYTECODE must be popped; byproducts handled by the gate's ignore matcher."""
+        self.assertNotIn("PYTHONDONTWRITEBYTECODE", rt._CLEAN_ENV)
 
-    def test_is_superset_of_os_environ(self):
-        """_CLEAN_ENV is built from {**os.environ, ...} so every env key must appear."""
+    def test_is_nonempty_copy_of_os_environ(self):
+        """_CLEAN_ENV is a dict copy of os.environ (minus PYTHONDONTWRITEBYTECODE)."""
+        self.assertGreater(len(rt._CLEAN_ENV), 0)
         for key in os.environ:
+            if key == "PYTHONDONTWRITEBYTECODE":
+                continue  # intentionally popped by the implementation
             self.assertIn(
                 key,
                 rt._CLEAN_ENV,

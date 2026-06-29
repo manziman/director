@@ -31,10 +31,10 @@ Output a SINGLE strict-JSON object and NOTHING else (no prose, no code fences):
       "id": "kebab-id",
       "title": "short title",
       "spec": "Self-contained instructions. Readable with ZERO other context: state exactly what to implement, the function/signature, behavior, and edge cases. Do not reference other nodes.",
-      "files": ["relative/path/only/files/this/node/may/edit.py"],
+      "files": ["relative/path/only/files/this/node/may/edit"],
       "depends_on": ["other-node-id"],
       "test_cmd": "exact shell command that runs THIS node's tests and exits nonzero until it's done",
-      "tests": ["relative/path/to/test_file.py"],
+      "tests": ["relative/path/to/test_file"],
       "estimated_difficulty": "easy|medium|hard"
     }
   ]

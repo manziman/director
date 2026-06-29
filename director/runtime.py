@@ -11,10 +11,11 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 # --------------------------------------------------------------------------- #
-# _CLEAN_ENV — suppress bytecode generation in spawned processes
+# _CLEAN_ENV — runtime subprocess environment (byproducts handled by gate's ignore matcher)
 # --------------------------------------------------------------------------- #
 
-_CLEAN_ENV = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+_CLEAN_ENV = {**os.environ}
+_CLEAN_ENV.pop("PYTHONDONTWRITEBYTECODE", None)
 
 
 # --------------------------------------------------------------------------- #

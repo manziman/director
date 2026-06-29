@@ -179,7 +179,8 @@ def _extract_json(text: str) -> dict:
 def _run_shell(cmd: str, cwd: Path) -> int:
     import os
 
-    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}  # keep the worktree clean
+    env = {**os.environ}  # byproducts handled by gate's ignore matcher
+    env.pop("PYTHONDONTWRITEBYTECODE", None)
     return subprocess.run(
         cmd, cwd=str(cwd), shell=True, capture_output=True, text=True, env=env
     ).returncode

@@ -551,7 +551,8 @@ class TestRunClaude(unittest.TestCase):
                 timeout=5,
             )
             self.assertIsNotNone(factory.last_env)
-            self.assertEqual(factory.last_env.get("PYTHONDONTWRITEBYTECODE"), "1")
+            # PYTHONDONTWRITEBYTECODE is popped; byproducts handled by the gate's ignore matcher
+            self.assertNotIn("PYTHONDONTWRITEBYTECODE", factory.last_env)
 
     def test_creates_log_parent_dirs(self):
         with tempfile.TemporaryDirectory() as d:

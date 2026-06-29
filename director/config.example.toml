@@ -48,9 +48,15 @@ top_k       = 20
 # Deterministic repo-wide gates. The exit code is the verdict — set these to your
 # project's real commands. Leave a value empty ("") to skip that gate.
 [gates]
+# EXAMPLE for a Python project — replace with your own stack's commands:
 test      = "pytest -q"
 lint      = "ruff check ."
 typecheck = "mypy ."
+# Examples for other stacks (replace the above):
+#   Go:   test = "go test ./..."        lint = "golangci-lint run"
+#   JS:   test = "npm test"             lint = "eslint ."           typecheck = "tsc --noEmit"
+#   Rust: test = "cargo test"           lint = "cargo clippy"
+# ignore = ["build/", "*.generated.*"]  # extra byproduct globs to exclude from the out-of-scope gate
 
 # Per-resolved-model pricing for cost accounting ($ / 1M tokens). Local = $0.
 # Pricing is keyed by the same "<provider>/<model>" tier string used in [tiers].
@@ -87,6 +93,12 @@ flake_runs        = 2        # re-run a node's tests this many times on success 
 stage_two                = true
 stage_two_file_threshold = 3      # stage two fires when a node escalated OR its diff touched > N files
 stage_one_llm            = false  # optional advisory explorer-tier compliance check (off: the gate already enforces it)
+
+# Optional target metadata (free-form keys for tooling awareness):
+# [target]
+# language = "python"
+# test_framework = "unittest"
+# toolchain = "uv"
 
 # --- director bench ---------------------------------------------------------
 # To compare profiles with `director bench "<task>" --profiles a,b,c`, create
