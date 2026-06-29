@@ -1,6 +1,99 @@
 # CHANGELOG
 
 
+## v0.5.0 (2026-06-29)
+
+### Continuous Integration
+
+- Pin all GitHub Actions to commit SHAs; checkout to v7
+  ([#14](https://github.com/manziman/director/pull/14),
+  [`09155b9`](https://github.com/manziman/director/commit/09155b9d90c3d56d1043b0aa93575c1f97a1d975))
+
+actions/checkout@v4 targets the deprecated Node.js 20 runtime. Bump checkout to v7 (Node.js 24) and
+  pin every action to a full commit SHA to prevent supply-chain tampering via mutable tags. Version
+  is retained in a trailing comment for readability/Dependabot.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Features
+
+- Make on-disk layout, CLI, docs, and packaging runtime-neutral
+  ([#16](https://github.com/manziman/director/pull/16),
+  [`675d7b5`](https://github.com/manziman/director/commit/675d7b514c12cfef4809f73fca1f1ecf6f1126bb))
+
+OpenCode's name was baked into paths, help text, package metadata, and docs, presenting it as THE
+  runtime rather than one peer. A Claude-Code-only user still got an .opencode/ tree and read docs
+  framing OpenCode as a hard prerequisite.
+
+- setup.sync_agents(repo, cfg=None) is now config-aware: it renders .opencode/ agents + starter
+  opencode.json ONLY when an OpenCode-owned provider is selected (detected via #9's
+  OPENCODE_PROVIDERS / registry). A claude-code-only project gets no .opencode/ tree; a
+  malformed/absent config writes nothing under .opencode/. .director/.gitignore is still always
+  written, and an existing .opencode/ tree is never deleted or clobbered (opencode.json stays
+  only-if-absent). - cli.py and plan.py pass their loaded Config to sync_agents so gating is
+  precise; sync-agents help and its output message are runtime-neutral. - init.py's
+  unavailable-models warning is provider-neutral. - pyproject description + keywords and both
+  READMEs present OpenCode and Claude Code as interchangeable peers, list each runtime as a
+  conditional prerequisite, and reorder the quickstart (init before sync-agents). Accurate
+  runtime-specific docs (e.g. OpenCode NDJSON details) are kept, not over-neutralized.
+
+Full suite green (356 tests); ruff clean. Stdlib only.
+
+Closes #10. Part of #8.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+- Pluggable per-runtime model discovery and provider-neutral pricing
+  ([#17](https://github.com/manziman/director/pull/17),
+  [`eb6e338`](https://github.com/manziman/director/commit/eb6e338fa7e5a8ed83c8acb6dac91280649afa6a))
+
+#9 already made provider resolution unbiased (registry, no default); this adds the remaining
+  model-agnosticism pieces from #11.
+
+- The Runtime protocol gains discover_models() -> list of "<provider>/<model>" tier strings: an
+  additive, init-time-only hook that never raises and returns [] when a runtime's source is
+  unavailable. It is independent of resolution — run_agent / runtime_for_model / OPENCODE_PROVIDERS
+  are unchanged and stay offline-safe for claude-code-only users. - OpenCodeRuntime.discover_models
+  shells out to `opencode models`. - ClaudeCodeRuntime.discover_models returns a curated
+  claude-code/{opus, sonnet,haiku} list (the claude CLI has no model-listing command). -
+  runtime.runtimes() returns the unique registered runtimes in registration order. `director init`
+  now enumerates models by unioning every runtime's discover_models() (deduped, stable order)
+  instead of calling `opencode models` directly, with the free-text fallback intact — so a
+  claude-code-only user is offered claude-code/* tiers. - config.example.toml adds claude-code/*
+  pricing examples and documents that any unlisted model is priced at $0.
+
+Full suite green (469 tests); ruff clean. Stdlib only.
+
+Closes #11. Part of #8.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+- Provider-runtime registry replacing the OpenCode-default prefix router
+  ([#15](https://github.com/manziman/director/pull/15),
+  [`a628d5d`](https://github.com/manziman/director/commit/a628d5dfa02611316350192b7f4597818c11bf91))
+
+Replace the hardcoded 2-way string-prefix runtime router (OpenCode as the implicit `else`) with an
+  explicit provider->runtime registry behind a small Runtime protocol.
+
+- New director/runtime.py holds the dependency-free primitives: the Runtime protocol, RunResult, and
+  the registry (register/resolve/runtime_for_model). This also breaks the opencode<->claudecode
+  import cycle. - Each runtime declares the provider segments it owns. ClaudeCodeRuntime owns
+  {"claude-code"}; OpenCodeRuntime owns a curated OPENCODE_PROVIDERS allowlist. There is no
+  catch-all default: an unrecognized provider yields an error RunResult naming the bad provider and
+  the registered runtimes (run_agent still never raises). - run_agent now resolves the runtime via
+  the registry. Its public keyword signature and the director.opencode import surface (RunResult,
+  watch_it_fail, _run_opencode, run_agent) are unchanged, so existing callers and test monkeypatch
+  points keep working. - Adding a third runtime (e.g. #6, Codex) is now a register() call, not a new
+  elif + bespoke parser.
+
+Routing is preserved: claude-code/<m> -> claude --model <m> (first segment stripped, remaining
+  slashes kept); anthropic/, lmstudio/, amazon-bedrock/, openrouter/, ... -> OpenCode unchanged.
+
+Closes #9. Part of #8.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v0.4.1 (2026-06-25)
 
 ### Bug Fixes
