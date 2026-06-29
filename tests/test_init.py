@@ -1,13 +1,13 @@
 """Acceptance tests for `director/init.py` (the `director init` flow).
 
-These pin the contract for the new module: a pure model-list parser, a
-subprocess-backed model discovery that degrades to free-text, interactive
-prompt helpers (driven here by monkeypatched `input`/`print`), a pure TOML
-renderer that must round-trip through `director.config.load_file`, and the
-`run_init` orchestrator that wires it all together against a temp repo.
+These pin the contract for the module: a pure model-list parser, a
+registry-driven model discovery that deduplicates tier strings in stable
+(registration) order, interactive prompt helpers (driven here by
+monkeypatched `input`/`print`), a pure TOML renderer that must round-trip
+through `director.config.load_file`, and the `run_init` orchestrator.
 
-Only the single external boundary (`subprocess.run` for `opencode models`) and
-the interactive builtins are stubbed; everything else is the real code.
+The obsolete DiscoverModelsTests class that mocked init.subprocess has been
+removed; that subprocess behavior is tested against OpenCodeRuntime directly.
 """
 
 import builtins
@@ -25,6 +25,7 @@ from unittest import mock
 os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
+import director.runtime as _rt
 from director import config, init
 from director.config import ROLES
 
@@ -83,38 +84,149 @@ class ParseModelsTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-class DiscoverModelsTests(unittest.TestCase):
-    def _completed(self, returncode, stdout):
-        cp = mock.Mock()
-        cp.returncode = returncode
-        cp.stdout = stdout
-        return cp
+class DiscoverModelsRegistryTests(unittest.TestCase):
+    """Registry-union semantics for discover_models().
 
-    def test_invokes_opencode_models_with_expected_args(self):
-        cp = self._completed(0, "x/y\n")
-        with mock.patch.object(init.subprocess, "run", return_value=cp) as run:
-            out = init.discover_models()
-        self.assertEqual(out, ["x/y"])
-        args, kwargs = run.call_args
-        self.assertEqual(args[0], ["opencode", "models"])
-        self.assertTrue(kwargs.get("capture_output"))
-        self.assertTrue(kwargs.get("text"))
-        self.assertFalse(kwargs.get("check", False))
+    discover_models() must iterate registered runtimes in registration order,
+    collect each runtime's discover_models() tier strings, deduplicate by
+    exact string (first occurrence wins) without alphabetical re-sorting,
+    and return the resulting list.
+    """
 
-    def test_parses_successful_output(self):
-        cp = self._completed(0, "Available:\nanthropic/claude\nopenai/gpt-4o\n")
-        with mock.patch.object(init.subprocess, "run", return_value=cp):
-            out = init.discover_models()
-        self.assertEqual(out, ["anthropic/claude", "openai/gpt-4o"])
+    def setUp(self):
+        # Snapshot and clear the global registry so tests are isolated.
+        self._saved = dict(_rt._REGISTRY)
+        _rt._REGISTRY.clear()
 
-    def test_nonzero_returncode_yields_empty(self):
-        cp = self._completed(2, "anthropic/claude\n")
-        with mock.patch.object(init.subprocess, "run", return_value=cp):
-            self.assertEqual(init.discover_models(), [])
+    def tearDown(self):
+        _rt._REGISTRY.clear()
+        _rt._REGISTRY.update(self._saved)
 
-    def test_missing_binary_filenotfound_yields_empty(self):
-        with mock.patch.object(init.subprocess, "run", side_effect=FileNotFoundError):
-            self.assertEqual(init.discover_models(), [])
+    @staticmethod
+    def _fake_rt(name, providers, tiers):
+        """Build a minimal runtime stub whose discover_models() returns `tiers`."""
+
+        class _Rt:
+            pass
+
+        _Rt.name = name
+        _Rt.providers = frozenset(providers)
+        _returns = list(tiers)
+
+        def discover_models(self_):
+            return list(_returns)
+
+        def run(self_, *, agent, model, message, cwd, log_path, timeout):
+            return _rt.RunResult(returncode=0)
+
+        def system_prompt_for(self_, agent):
+            return None
+
+        _Rt.discover_models = discover_models
+        _Rt.run = run
+        _Rt.system_prompt_for = system_prompt_for
+        return _Rt()
+
+    # -- base cases -----------------------------------------------------------
+
+    def test_empty_registry_returns_empty_list(self):
+        self.assertEqual(init.discover_models(), [])
+
+    def test_returns_list_type(self):
+        rt = self._fake_rt("rt", ["p"], ["p/a"])
+        _rt.register(rt)
+        self.assertIsInstance(init.discover_models(), list)
+
+    # -- single runtime -------------------------------------------------------
+
+    def test_single_runtime_returns_its_tiers(self):
+        rt = self._fake_rt("r1", ["prov1"], ["prov1/alpha", "prov1/beta"])
+        _rt.register(rt)
+        self.assertEqual(init.discover_models(), ["prov1/alpha", "prov1/beta"])
+
+    def test_single_runtime_empty_discover_returns_empty(self):
+        rt = self._fake_rt("r1", ["p1"], [])
+        _rt.register(rt)
+        self.assertEqual(init.discover_models(), [])
+
+    # -- union across runtimes ------------------------------------------------
+
+    def test_two_runtimes_unioned_in_registration_order(self):
+        r1 = self._fake_rt("r1", ["p1"], ["p1/a", "p1/b"])
+        r2 = self._fake_rt("r2", ["p2"], ["p2/c"])
+        _rt.register(r1)
+        _rt.register(r2)
+        self.assertEqual(init.discover_models(), ["p1/a", "p1/b", "p2/c"])
+
+    def test_three_runtimes_merged_in_registration_order(self):
+        r1 = self._fake_rt("r1", ["p1"], ["p1/x"])
+        r2 = self._fake_rt("r2", ["p2"], ["p2/y"])
+        r3 = self._fake_rt("r3", ["p3"], ["p3/z"])
+        _rt.register(r1)
+        _rt.register(r2)
+        _rt.register(r3)
+        self.assertEqual(init.discover_models(), ["p1/x", "p2/y", "p3/z"])
+
+    def test_first_runtime_empty_second_runtime_present(self):
+        r1 = self._fake_rt("r1", ["p1"], [])
+        r2 = self._fake_rt("r2", ["p2"], ["p2/model"])
+        _rt.register(r1)
+        _rt.register(r2)
+        self.assertEqual(init.discover_models(), ["p2/model"])
+
+    def test_all_runtimes_empty_returns_empty(self):
+        r1 = self._fake_rt("r1", ["p1"], [])
+        r2 = self._fake_rt("r2", ["p2"], [])
+        _rt.register(r1)
+        _rt.register(r2)
+        self.assertEqual(init.discover_models(), [])
+
+    # -- deduplication --------------------------------------------------------
+
+    def test_dedup_across_runtimes_keeps_first_occurrence(self):
+        r1 = self._fake_rt("r1", ["p1"], ["shared/x", "p1/only"])
+        r2 = self._fake_rt("r2", ["p2"], ["shared/x", "p2/only"])
+        _rt.register(r1)
+        _rt.register(r2)
+        result = init.discover_models()
+        self.assertEqual(result.count("shared/x"), 1)
+        # The first runtime's "shared/x" must appear before r2's unique models.
+        self.assertLess(result.index("shared/x"), result.index("p2/only"))
+
+    def test_dedup_within_single_runtime(self):
+        rt = self._fake_rt("rt", ["p"], ["p/a", "p/b", "p/a", "p/c"])
+        _rt.register(rt)
+        self.assertEqual(init.discover_models(), ["p/a", "p/b", "p/c"])
+
+    def test_full_dedup_across_three_runtimes(self):
+        r1 = self._fake_rt("r1", ["p1"], ["common/m", "p1/only"])
+        r2 = self._fake_rt("r2", ["p2"], ["common/m", "p2/only"])
+        r3 = self._fake_rt("r3", ["p3"], ["common/m", "p3/only"])
+        _rt.register(r1)
+        _rt.register(r2)
+        _rt.register(r3)
+        result = init.discover_models()
+        self.assertEqual(result.count("common/m"), 1)
+        self.assertIn("p1/only", result)
+        self.assertIn("p2/only", result)
+        self.assertIn("p3/only", result)
+
+    # -- stable (non-alphabetical) ordering -----------------------------------
+
+    def test_order_within_runtime_is_not_sorted(self):
+        # z/m/a must stay z/m/a, not be re-sorted to a/m/z.
+        rt = self._fake_rt("rt", ["p"], ["p/z-model", "p/m-model", "p/a-model"])
+        _rt.register(rt)
+        self.assertEqual(init.discover_models(), ["p/z-model", "p/m-model", "p/a-model"])
+
+    def test_registration_order_beats_alphabetical_name_order(self):
+        # z-prov registers first; its models must precede a-prov's regardless
+        # of alphabetical ordering of provider names.
+        rz = self._fake_rt("z-rt", ["z-prov"], ["z-prov/model"])
+        ra = self._fake_rt("a-rt", ["a-prov"], ["a-prov/model"])
+        _rt.register(rz)
+        _rt.register(ra)
+        self.assertEqual(init.discover_models(), ["z-prov/model", "a-prov/model"])
 
 
 # --------------------------------------------------------------------------- #

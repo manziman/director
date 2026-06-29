@@ -62,6 +62,15 @@ class Runtime(Protocol):
 
     def system_prompt_for(self, agent: str) -> str | None: ...
 
+    def discover_models(self) -> list[str]:
+        """Additive, init-time-only convenience hook (NOT used by resolution).
+
+        Returns ready-to-paste "<provider>/<model>" tier strings (e.g.
+        "opencode/anthropic/claude-x" or "claude-code/opus").  Returns an
+        empty list [] when the runtime's source is unavailable.  MUST NEVER raise.
+        """
+        ...
+
 
 # --------------------------------------------------------------------------- #
 # Registry — global provider-segment → runtime mapping
@@ -88,3 +97,8 @@ def resolve(provider: str) -> Runtime | None:
 def runtime_for_model(model: str) -> Runtime | None:
     provider = model.split("/", 1)[0]
     return resolve(provider)
+
+
+def runtimes() -> list[Runtime]:
+    """Return the unique registered runtime instances in stable registration order."""
+    return list(dict.fromkeys(_REGISTRY.values()))
