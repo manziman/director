@@ -14,10 +14,12 @@ Run: python3 -m unittest tests.test_opencode -v
 """
 
 import ast
+import contextlib
 import inspect
 import pathlib
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -334,6 +336,262 @@ class TestNoImportFromDirectorInit(unittest.TestCase):
             [],
             "director/opencode.py must not import from director.init:\n" + "\n".join(violations),
         )
+
+
+# --------------------------------------------------------------------------- #
+# 9. _run_opencode delegates process-tree lifecycle to director.proc
+#
+#    Node `callsite-opencode`: _run_opencode must launch the child via
+#    proc.popen_tree (own process group/session) and, on timeout, tear down the
+#    whole tree via proc.kill_tree(handle) — instead of subprocess.Popen +
+#    proc.kill()/proc.wait() which orphans grandchildren.
+#
+#    These tests do NOT import director.proc (a sibling module that may not
+#    exist yet); they patch opencode's reference to the proc module so they hold
+#    regardless of whether the implementer aliases it `proc_mod` or `proc`.
+# --------------------------------------------------------------------------- #
+
+
+class _FakeHandle:
+    """Stand-in for the Popen handle returned by popen_tree / subprocess.Popen.
+
+    .wait(timeout=...) raises wait_exc only when a timeout is supplied (the call
+    that detects a hang); the bare cleanup wait() in the legacy path returns
+    normally so red runs surface a clean assertion failure, not a crash.
+    """
+
+    def __init__(self, *, wait_result=0, wait_exc=None, pid=4321):
+        self.pid = pid
+        self.wait_result = wait_result
+        self.wait_exc = wait_exc
+        self.wait_calls = []
+        self.kill_calls = 0
+
+    def wait(self, timeout=None):
+        self.wait_calls.append(timeout)
+        if timeout is not None and self.wait_exc is not None:
+            raise self.wait_exc
+        return self.wait_result
+
+    def kill(self):
+        self.kill_calls += 1
+
+    def poll(self):
+        return self.wait_result
+
+
+class _RecordingPopen:
+    """Records calls to the (now-forbidden) subprocess.Popen path."""
+
+    def __init__(self, handle):
+        self.handle = handle
+        self.calls = []
+
+    def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        return self.handle
+
+
+class _FakeProc:
+    """Stand-in for the director.proc module that opencode delegates to."""
+
+    def __init__(self, handle):
+        self.handle = handle
+        self.popen_tree_calls = []
+        self.kill_tree_calls = []
+
+    def popen_tree(self, *args, **kwargs):
+        self.popen_tree_calls.append((args, kwargs))
+        return self.handle
+
+    def kill_tree(self, handle):
+        self.kill_tree_calls.append(handle)
+        # Real kill_tree reaps the process; emulate so callers don't block.
+        with contextlib.suppress(Exception):
+            handle.wait()
+
+
+def _invoke(
+    handle, *, agent="builder", model="anthropic/claude-opus-4-8", message="do it", timeout=300
+):
+    """Drive _run_opencode with the proc module and subprocess.Popen patched.
+
+    Returns (result, fake_proc, rec_popen, expected_cmd, cwd). Both fakes hand
+    back the SAME handle so its identity is stable across the two code paths.
+    """
+    fake_proc = _FakeProc(handle)
+    rec_popen = _RecordingPopen(handle)
+    with tempfile.TemporaryDirectory() as tmp:
+        cwd = pathlib.Path(tmp)
+        log_path = cwd / "logs" / "agent.ndjson"
+        expected_cmd = [
+            "opencode",
+            "run",
+            "--dir",
+            str(cwd),
+            "--agent",
+            agent,
+            "--model",
+            model,
+            "--format",
+            "json",
+            "--print-logs",
+            message,
+        ]
+        with (
+            patch.object(oc.subprocess, "Popen", rec_popen),
+            patch.object(oc, "proc_mod", fake_proc, create=True),
+            patch.object(oc, "proc", fake_proc, create=True),
+        ):
+            result = oc._run_opencode(
+                agent=agent,
+                model=model,
+                message=message,
+                cwd=cwd,
+                log_path=log_path,
+                timeout=timeout,
+            )
+    return result, fake_proc, rec_popen, expected_cmd, cwd
+
+
+class TestRunOpencodeUsesProcTree(unittest.TestCase):
+    def test_delegates_to_popen_tree(self):
+        result, fake_proc, _rec, _cmd, _cwd = _invoke(_FakeHandle(wait_result=0))
+        self.assertEqual(
+            len(fake_proc.popen_tree_calls),
+            1,
+            "_run_opencode must launch the child via director.proc.popen_tree",
+        )
+
+    def test_popen_tree_receives_cmd_cwd_env_streams(self):
+        result, fake_proc, _rec, expected_cmd, cwd = _invoke(_FakeHandle(wait_result=0))
+        self.assertEqual(len(fake_proc.popen_tree_calls), 1)
+        args, kwargs = fake_proc.popen_tree_calls[0]
+        self.assertEqual(args[0], expected_cmd, "cmd must be passed positionally, unchanged")
+        self.assertEqual(kwargs.get("cwd"), str(cwd), "same cwd as before must be forwarded")
+        self.assertIs(kwargs.get("env"), oc._CLEAN_ENV, "_CLEAN_ENV must be forwarded as env")
+        self.assertIsNotNone(kwargs.get("stdout"), "stdout handle must be forwarded")
+        self.assertIsNotNone(kwargs.get("stderr"), "stderr handle must be forwarded")
+        self.assertIsNot(
+            kwargs.get("stdout"),
+            kwargs.get("stderr"),
+            "stdout and stderr must be distinct handles (separate .stderr file)",
+        )
+
+    def test_does_not_use_subprocess_popen(self):
+        result, _fake, rec_popen, _cmd, _cwd = _invoke(_FakeHandle(wait_result=0))
+        self.assertEqual(
+            rec_popen.calls, [], "_run_opencode must not call subprocess.Popen directly"
+        )
+
+
+class TestRunOpencodeReturnShape(unittest.TestCase):
+    def test_returns_runresult(self):
+        result, *_ = _invoke(_FakeHandle(wait_result=0))
+        self.assertIsInstance(result, oc.RunResult)
+
+    def test_success_returncode_propagated(self):
+        result, fake_proc, *_ = _invoke(_FakeHandle(wait_result=0))
+        self.assertEqual(result.returncode, 0)
+        self.assertFalse(result.timed_out)
+        self.assertEqual(fake_proc.kill_tree_calls, [], "no kill on the happy path")
+        self.assertEqual(len(fake_proc.popen_tree_calls), 1)
+
+    def test_nonzero_returncode_propagated(self):
+        result, *_ = _invoke(_FakeHandle(wait_result=7))
+        self.assertEqual(result.returncode, 7)
+        self.assertFalse(result.timed_out)
+
+
+class TestRunOpencodeTimeoutKillsTree(unittest.TestCase):
+    def _timeout_handle(self):
+        return _FakeHandle(
+            wait_result=-9,
+            wait_exc=subprocess.TimeoutExpired(["opencode"], 1),
+        )
+
+    def test_timeout_calls_kill_tree_with_handle(self):
+        handle = self._timeout_handle()
+        result, fake_proc, *_ = _invoke(handle, timeout=1)
+        self.assertEqual(
+            fake_proc.kill_tree_calls,
+            [handle],
+            "on TimeoutExpired, _run_opencode must call proc.kill_tree(handle)",
+        )
+
+    def test_timeout_return_shape_preserved(self):
+        result, _fake, *_ = _invoke(self._timeout_handle(), timeout=1)
+        self.assertTrue(result.timed_out)
+        self.assertEqual(result.returncode, 124)
+
+    def test_timeout_does_not_use_subprocess_popen(self):
+        result, fake_proc, rec_popen, _cmd, _cwd = _invoke(self._timeout_handle(), timeout=1)
+        self.assertEqual(rec_popen.calls, [], "timeout path must not touch subprocess.Popen")
+        self.assertEqual(len(fake_proc.popen_tree_calls), 1)
+
+
+class TestRunOpencodeSignatureUnchanged(unittest.TestCase):
+    def test_keyword_only_signature_intact(self):
+        sig = inspect.signature(oc._run_opencode)
+        self.assertEqual(
+            list(sig.parameters),
+            ["agent", "model", "message", "cwd", "log_path", "timeout"],
+        )
+        for p in sig.parameters.values():
+            self.assertEqual(
+                p.kind,
+                inspect.Parameter.KEYWORD_ONLY,
+                f"parameter {p.name!r} must stay keyword-only",
+            )
+
+
+class TestRunOpencodeSourceUsesProc(unittest.TestCase):
+    """Source-level guarantees (do not require director.proc to be importable)."""
+
+    def setUp(self):
+        self.tree = ast.parse(_OPENCODE_SRC.read_text())
+
+    def _run_opencode_node(self):
+        for node in ast.walk(self.tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "_run_opencode":
+                return node
+        self.fail("_run_opencode function not found in opencode.py")
+
+    def test_imports_proc_from_director(self):
+        found = False
+        for node in ast.walk(self.tree):
+            if (
+                (
+                    isinstance(node, ast.ImportFrom)
+                    and node.module == "director"
+                    and any(a.name == "proc" for a in node.names)
+                )
+                or isinstance(node, ast.Import)
+                and any(a.name == "director.proc" for a in node.names)
+            ):
+                found = True
+        self.assertTrue(
+            found,
+            "opencode.py must import proc from director "
+            "(e.g. 'from director import proc as proc_mod')",
+        )
+
+    def test_run_opencode_calls_popen_tree(self):
+        attrs = [
+            n.attr for n in ast.walk(self._run_opencode_node()) if isinstance(n, ast.Attribute)
+        ]
+        self.assertIn("popen_tree", attrs, "_run_opencode must call proc.popen_tree")
+
+    def test_run_opencode_calls_kill_tree(self):
+        attrs = [
+            n.attr for n in ast.walk(self._run_opencode_node()) if isinstance(n, ast.Attribute)
+        ]
+        self.assertIn("kill_tree", attrs, "_run_opencode must call proc.kill_tree on timeout")
+
+    def test_run_opencode_no_subprocess_popen(self):
+        for n in ast.walk(self._run_opencode_node()):
+            if isinstance(n, ast.Attribute) and n.attr == "Popen":
+                self.fail("_run_opencode must not call subprocess.Popen directly")
 
 
 if __name__ == "__main__":

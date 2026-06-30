@@ -2,8 +2,14 @@
 
 These tests exercise the parsing/aggregation logic and the command-building /
 subprocess-driving logic of `director.claudecode` in isolation. No real `claude`
-CLI, network, or model is invoked: `subprocess.Popen` is monkeypatched and
-payload files are written directly to `log_path`.
+CLI, network, or model is invoked.
+
+`run_claude` no longer calls `subprocess.Popen` directly: it starts the child in
+its own process group/session and force-kills the whole tree on timeout by
+delegating to the shared helpers `director.proc.popen_tree` / `kill_tree`, which
+`claudecode` imports as `proc_mod`. The subprocess-driving tests therefore patch
+that delegation seam (`director.claudecode.proc_mod.popen_tree` and
+`...proc_mod.kill_tree`) rather than `claudecode.subprocess.Popen`.
 
 Run: python3 -m unittest discover -s tests -p test_claudecode.py -q
 """
@@ -16,6 +22,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
@@ -428,86 +435,120 @@ class TestParseClaude(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# run_claude
+# run_claude — delegates spawning/killing to director.proc (proc_mod)
 # --------------------------------------------------------------------------- #
-class _FakeProc:
-    """A stand-in for subprocess.Popen that writes a payload to stdout."""
+class _FakeHandle:
+    """Stand-in for the Popen handle returned by proc.popen_tree."""
 
-    def __init__(
-        self,
-        cmd,
-        cwd=None,
-        stdout=None,
-        stderr=None,
-        env=None,
-        payload=b"",
-        err=b"",
-        rc=0,
-        raise_timeout=False,
-    ):
-        self.cmd = list(cmd)
-        self.cwd = cwd
-        self.env = env
+    def __init__(self, rc=0, raise_timeout=False, pid=4321):
         self._rc = rc
         self._raise_timeout = raise_timeout
-        if stdout is not None:
-            stdout.write(payload)
-            stdout.flush()
-        if stderr is not None:
-            stderr.write(err)
-            stderr.flush()
+        self.pid = pid
+        self.waits = []
 
     def wait(self, timeout=None):
-        if self._raise_timeout:
-            raise subprocess.TimeoutExpired(self.cmd, timeout)
+        self.waits.append(timeout)
+        # Only the first wait (the timeout-bounded one) times out; once the tree
+        # has been killed the process is reaped, so later waits return the code.
+        if self._raise_timeout and len(self.waits) == 1:
+            raise subprocess.TimeoutExpired(cmd="claude", timeout=timeout)
         return self._rc
 
 
-class _PopenFactory:
-    """Records the last Popen call and returns _FakeProc instances."""
+class _PopenTreeFactory:
+    """Records the popen_tree call and writes payload/err to the given streams."""
 
     def __init__(self, payload=b"", err=b"", rc=0, raise_timeout=False):
         self.payload = payload
         self.err = err
         self.rc = rc
         self.raise_timeout = raise_timeout
+        self.calls = 0
         self.last_cmd = None
         self.last_cwd = None
         self.last_env = None
+        self.last_stdout = None
+        self.last_stderr = None
+        self.last_extra_kwargs = None
+        self.handle = None
 
-    def __call__(self, cmd, cwd=None, stdout=None, stderr=None, env=None):
+    def __call__(self, cmd, cwd=None, stdout=None, stderr=None, env=None, **extra):
+        self.calls += 1
         self.last_cmd = list(cmd)
         self.last_cwd = cwd
         self.last_env = env
-        return _FakeProc(
-            cmd,
-            cwd=cwd,
-            stdout=stdout,
-            stderr=stderr,
-            env=env,
-            payload=self.payload,
-            err=self.err,
-            rc=self.rc,
-            raise_timeout=self.raise_timeout,
-        )
+        self.last_stdout = stdout
+        self.last_stderr = stderr
+        self.last_extra_kwargs = dict(extra)
+        if stdout is not None:
+            stdout.write(self.payload)
+            stdout.flush()
+        if stderr is not None:
+            stderr.write(self.err)
+            stderr.flush()
+        self.handle = _FakeHandle(rc=self.rc, raise_timeout=self.raise_timeout)
+        return self.handle
 
 
-class TestRunClaude(unittest.TestCase):
-    def _run(self, factory, **kwargs):
+class _RecordingKill:
+    """Records every kill_tree(handle) call; optionally raises to test best-effort."""
+
+    def __init__(self, raise_exc=None):
+        self.calls = []
+        self.raise_exc = raise_exc
+
+    def __call__(self, handle):
+        self.calls.append(handle)
+        if self.raise_exc is not None:
+            raise self.raise_exc
+
+
+class TestRunClaudeDelegatesToProc(unittest.TestCase):
+    """The callsite contract: run_claude routes through proc_mod, not raw Popen."""
+
+    def _run(self, factory, kill=None, **kwargs):
         import director.claudecode as cc
 
-        orig = cc.subprocess.Popen
-        cc.subprocess.Popen = factory
-        try:
+        kill = _RecordingKill() if kill is None else kill
+        # Patching attributes on cc.proc_mod evaluates cc.proc_mod first; before
+        # the callsite is wired this raises AttributeError -> the test goes red
+        # for the right reason (the proc_mod delegation is missing).
+        with (
+            mock.patch.object(cc.proc_mod, "popen_tree", factory),
+            mock.patch.object(cc.proc_mod, "kill_tree", kill),
+        ):
+            self._last_kill = kill
             return run_claude(**kwargs)
-        finally:
-            cc.subprocess.Popen = orig
+
+    def test_proc_mod_alias_is_the_proc_module(self):
+        import director.claudecode as cc
+
+        self.assertTrue(hasattr(cc, "proc_mod"), "claudecode must import `proc as proc_mod`")
+        import director.proc as proc_module
+
+        self.assertIs(cc.proc_mod, proc_module)
+
+    def test_routes_through_popen_tree_not_raw_popen(self):
+        with tempfile.TemporaryDirectory() as d:
+            log_path = Path(d) / "run.json"
+            factory = _PopenTreeFactory(payload=b"{}", rc=0)
+            self._run(
+                factory,
+                agent="planner",
+                model="opus",
+                message="m",
+                cwd=d,
+                log_path=log_path,
+                timeout=5,
+            )
+            # popen_tree was the spawning seam, called exactly once.
+            self.assertEqual(factory.calls, 1)
 
     def test_builds_correct_command(self):
         with tempfile.TemporaryDirectory() as d:
             log_path = Path(d) / "logs" / "run.json"
             payload = json.dumps({"result": "ok"}).encode()
-            factory = _PopenFactory(payload=payload, rc=0)
+            factory = _PopenTreeFactory(payload=payload, rc=0)
             r = self._run(
                 factory,
                 agent="planner",
@@ -540,7 +581,7 @@ class TestRunClaude(unittest.TestCase):
     def test_uses_clean_env(self):
         with tempfile.TemporaryDirectory() as d:
             log_path = Path(d) / "run.json"
-            factory = _PopenFactory(payload=b"{}", rc=0)
+            factory = _PopenTreeFactory(payload=b"{}", rc=0)
             self._run(
                 factory,
                 agent="planner",
@@ -551,13 +592,18 @@ class TestRunClaude(unittest.TestCase):
                 timeout=5,
             )
             self.assertIsNotNone(factory.last_env)
+            # popen_tree is handed _CLEAN_ENV verbatim (the same object claudecode
+            # imports from director.runtime).
+            from director.runtime import _CLEAN_ENV
+
+            self.assertIs(factory.last_env, _CLEAN_ENV)
             # PYTHONDONTWRITEBYTECODE is popped; byproducts handled by the gate's ignore matcher
             self.assertNotIn("PYTHONDONTWRITEBYTECODE", factory.last_env)
 
     def test_creates_log_parent_dirs(self):
         with tempfile.TemporaryDirectory() as d:
             log_path = Path(d) / "deep" / "nested" / "run.json"
-            factory = _PopenFactory(payload=b"{}", rc=0)
+            factory = _PopenTreeFactory(payload=b"{}", rc=0)
             self._run(
                 factory,
                 agent="planner",
@@ -573,7 +619,7 @@ class TestRunClaude(unittest.TestCase):
     def test_writes_stderr_file(self):
         with tempfile.TemporaryDirectory() as d:
             log_path = Path(d) / "run.json"
-            factory = _PopenFactory(payload=b"{}", err=b"some stderr", rc=0)
+            factory = _PopenTreeFactory(payload=b"{}", err=b"some stderr", rc=0)
             self._run(
                 factory,
                 agent="planner",
@@ -587,28 +633,11 @@ class TestRunClaude(unittest.TestCase):
             self.assertTrue(err_path.exists())
             self.assertEqual(err_path.read_bytes(), b"some stderr")
 
-    def test_timeout_sets_rc_124_and_timed_out(self):
+    def test_cwd_passed_to_popen_tree(self):
         with tempfile.TemporaryDirectory() as d:
             log_path = Path(d) / "run.json"
-            factory = _PopenFactory(payload=b"", rc=0, raise_timeout=True)
-            r = self._run(
-                factory,
-                agent="planner",
-                model="claude-opus-4-8",
-                message="m",
-                cwd=d,
-                log_path=log_path,
-                timeout=1,
-            )
-            self.assertEqual(r.returncode, 124)
-            self.assertTrue(r.timed_out)
-
-    def test_never_raises_on_cli_failure(self):
-        with tempfile.TemporaryDirectory() as d:
-            log_path = Path(d) / "run.json"
-            # rc=2, empty payload -> error surfaced via RunResult, not raised
-            factory = _PopenFactory(payload=b"", rc=2)
-            r = self._run(
+            factory = _PopenTreeFactory(payload=b"{}", rc=0)
+            self._run(
                 factory,
                 agent="planner",
                 model="claude-opus-4-8",
@@ -617,8 +646,8 @@ class TestRunClaude(unittest.TestCase):
                 log_path=log_path,
                 timeout=5,
             )
-            self.assertEqual(r.returncode, 2)
-            self.assertIsNotNone(r.error)
+            # cwd is passed through stringified, exactly as the old Popen call did.
+            self.assertEqual(factory.last_cwd, str(d))
 
     def test_parses_written_payload(self):
         with tempfile.TemporaryDirectory() as d:
@@ -631,7 +660,7 @@ class TestRunClaude(unittest.TestCase):
                     "num_turns": 4,
                 }
             ).encode()
-            factory = _PopenFactory(payload=payload, rc=0)
+            factory = _PopenTreeFactory(payload=payload, rc=0)
             r = self._run(
                 factory,
                 agent="planner",
@@ -650,10 +679,10 @@ class TestRunClaude(unittest.TestCase):
             self.assertIsNone(r.error)
             self.assertEqual(r.log_path, str(log_path))
 
-    def test_cwd_passed_to_popen(self):
+    def test_no_kill_tree_on_clean_run(self):
         with tempfile.TemporaryDirectory() as d:
             log_path = Path(d) / "run.json"
-            factory = _PopenFactory(payload=b"{}", rc=0)
+            factory = _PopenTreeFactory(payload=b"{}", rc=0)
             self._run(
                 factory,
                 agent="planner",
@@ -663,7 +692,80 @@ class TestRunClaude(unittest.TestCase):
                 log_path=log_path,
                 timeout=5,
             )
-            self.assertEqual(factory.last_cwd, d)
+            # Happy path must not force-kill anything.
+            self.assertEqual(self._last_kill.calls, [])
+
+    def test_timeout_sets_rc_124_and_timed_out(self):
+        with tempfile.TemporaryDirectory() as d:
+            log_path = Path(d) / "run.json"
+            factory = _PopenTreeFactory(payload=b"", rc=0, raise_timeout=True)
+            r = self._run(
+                factory,
+                agent="planner",
+                model="claude-opus-4-8",
+                message="m",
+                cwd=d,
+                log_path=log_path,
+                timeout=1,
+            )
+            self.assertEqual(r.returncode, 124)
+            self.assertTrue(r.timed_out)
+
+    def test_timeout_force_kills_the_tree(self):
+        with tempfile.TemporaryDirectory() as d:
+            log_path = Path(d) / "run.json"
+            factory = _PopenTreeFactory(payload=b"", rc=0, raise_timeout=True)
+            self._run(
+                factory,
+                agent="planner",
+                model="claude-opus-4-8",
+                message="m",
+                cwd=d,
+                log_path=log_path,
+                timeout=1,
+            )
+            # kill_tree was called exactly once with the SAME handle popen_tree
+            # returned (the whole tree, not a bare proc.kill()).
+            self.assertEqual(self._last_kill.calls, [factory.handle])
+
+    def test_kill_path_is_best_effort(self):
+        with tempfile.TemporaryDirectory() as d:
+            log_path = Path(d) / "run.json"
+            factory = _PopenTreeFactory(payload=b"", rc=0, raise_timeout=True)
+            # kill_tree blowing up must not escape run_claude.
+            kill = _RecordingKill(raise_exc=OSError("boom"))
+            r = self._run(
+                factory,
+                kill=kill,
+                agent="planner",
+                model="claude-opus-4-8",
+                message="m",
+                cwd=d,
+                log_path=log_path,
+                timeout=1,
+            )
+            self.assertEqual(len(kill.calls), 1)
+            self.assertEqual(r.returncode, 124)
+            self.assertTrue(r.timed_out)
+
+    def test_never_raises_on_cli_failure(self):
+        with tempfile.TemporaryDirectory() as d:
+            log_path = Path(d) / "run.json"
+            # rc=2, empty payload -> error surfaced via RunResult, not raised
+            factory = _PopenTreeFactory(payload=b"", rc=2)
+            r = self._run(
+                factory,
+                agent="planner",
+                model="claude-opus-4-8",
+                message="m",
+                cwd=d,
+                log_path=log_path,
+                timeout=5,
+            )
+            self.assertEqual(r.returncode, 2)
+            self.assertIsNotNone(r.error)
+            # A non-timeout failure must not force-kill.
+            self.assertEqual(self._last_kill.calls, [])
 
 
 if __name__ == "__main__":
