@@ -1,6 +1,41 @@
 # CHANGELOG
 
 
+## v0.7.0 (2026-06-30)
+
+### Features
+
+- Os-agnostic portable shell execution and process-tree termination (#13)
+  ([#20](https://github.com/manziman/director/pull/20),
+  [`28f3c9c`](https://github.com/manziman/director/commit/28f3c9cd9a5ee28f635c2fba6bd8487d44c272f3))
+
+Standardize director's command execution across POSIX and Windows, and kill the whole process tree
+  on timeout.
+
+New stdlib-only director/proc.py consolidates the three shell=True helpers (run.py, gates.py,
+  plan.py) behind one portable helper: - _shell_argv builds an explicit [shell, -c, cmd] run with
+  shell=False; POSIX uses /bin/sh, Windows prefers a POSIX shell on PATH (sh, then bash) and falls
+  back to cmd /c. - run_shell captures one merged stream decoded UTF-8 with errors=replace.
+
+Process-tree termination on timeout: - popen_tree starts each child in its own group/session
+  (start_new_session / CREATE_NEW_PROCESS_GROUP); kill_tree kills the whole tree (killpg+SIGKILL /
+  taskkill /F /T). - opencode.py and claudecode.py runtime-CLI launches use popen_tree/kill_tree. -
+  run_shell also routes its timeout through popen_tree + kill_tree, so gate/test commands that spawn
+  their own subprocess trees no longer orphan grandchildren.
+
+CI gains an OS axis: os: [ubuntu-latest, windows-latest].
+
+Scoped out (already correct): pathlib, tempfile.gettempdir(), splitlines(), gates.py backslash
+  normalization.
+
+Planned and implemented by director itself (dogfooding): Opus 4.8 planner and test-author,
+  qwen3.6-27b-mtp executor, Sonnet 4.6 reviewer. 666 tests pass and ruff is clean.
+
+Closes #13.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v0.6.0 (2026-06-29)
 
 ### Features
