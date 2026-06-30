@@ -11,6 +11,7 @@ import json
 import subprocess
 from pathlib import Path
 
+from director import proc as proc_mod
 from director.runtime import _CLEAN_ENV, RunResult, register
 
 # Best-effort list of stable `claude --model` aliases.  Not authoritative;
@@ -74,14 +75,12 @@ def run_claude(
 
     timed_out = False
     with open(log_path, "wb") as out, open(err_path, "wb") as err:
-        proc = subprocess.Popen(cmd, cwd=str(cwd), stdout=out, stderr=err, env=_CLEAN_ENV)
+        handle = proc_mod.popen_tree(cmd, cwd=str(cwd), stdout=out, stderr=err, env=_CLEAN_ENV)
         try:
-            rc = proc.wait(timeout=timeout)
+            rc = handle.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            with contextlib.suppress(AttributeError, OSError):
-                proc.kill()
             with contextlib.suppress(Exception):
-                proc.wait()
+                proc_mod.kill_tree(handle)
             rc = 124
             timed_out = True
 

@@ -14,7 +14,6 @@ allowlists are disjoint, so their merges never conflict. Git mutations
 from __future__ import annotations
 
 import shutil
-import subprocess
 import tempfile
 import threading
 import time
@@ -22,7 +21,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from director import dag, gitutil, setup
+from director import dag, gitutil, proc, setup
 from director.config import Config
 from director.cost import CostLedger, cost_of
 from director.gates import GateResult, integration_gate, node_gate
@@ -82,14 +81,7 @@ def _executor_message(node: Node, worktree: Path, feedback: str) -> str:
 
 
 def _run_shell(cmd: str, cwd: Path, timeout: int) -> str:
-    import os
-
-    env = {**os.environ}  # byproducts handled by gate's ignore matcher
-    env.pop("PYTHONDONTWRITEBYTECODE", None)
-    p = subprocess.run(
-        cmd, cwd=str(cwd), shell=True, capture_output=True, text=True, timeout=timeout, env=env
-    )
-    return p.stdout + p.stderr
+    return proc.run_shell(cmd, cwd, timeout).output
 
 
 def _attempt_tiers(cfg: Config, max_attempts: int) -> list[tuple[str, str]]:

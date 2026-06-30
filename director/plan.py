@@ -22,12 +22,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import subprocess
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from director import gitutil, setup
+from director import gitutil, proc, setup
 from director.config import Config
 from director.cost import CostLedger
 from director.dag import topo_order, validate
@@ -177,13 +176,7 @@ def _extract_json(text: str) -> dict:
 
 
 def _run_shell(cmd: str, cwd: Path) -> int:
-    import os
-
-    env = {**os.environ}  # byproducts handled by gate's ignore matcher
-    env.pop("PYTHONDONTWRITEBYTECODE", None)
-    return subprocess.run(
-        cmd, cwd=str(cwd), shell=True, capture_output=True, text=True, env=env
-    ).returncode
+    return proc.run_shell(cmd, cwd, timeout=None).returncode
 
 
 def _sha256(path: Path) -> str:

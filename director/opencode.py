@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import director.claudecode  # noqa: F401 — ensures ClaudeCodeRuntime registers
+from director import proc as proc_mod
 from director.runtime import (
     _CLEAN_ENV,
     _REGISTRY,
@@ -153,12 +154,11 @@ def _run_opencode(
 
     timed_out = False
     with open(log_path, "wb") as out, open(err_path, "wb") as err:
-        proc = subprocess.Popen(cmd, cwd=str(cwd), stdout=out, stderr=err, env=_CLEAN_ENV)
+        handle = proc_mod.popen_tree(cmd, cwd=str(cwd), stdout=out, stderr=err, env=_CLEAN_ENV)
         try:
-            rc = proc.wait(timeout=timeout)
+            rc = handle.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
+            proc_mod.kill_tree(handle)
             rc = 124
             timed_out = True
 

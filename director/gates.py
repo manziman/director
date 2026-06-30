@@ -16,12 +16,11 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import os
-import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from director import gitutil
+from director import gitutil, proc
 from director.config import Config
 from director.models import Node
 
@@ -108,19 +107,12 @@ def build_ignore_matcher(worktree: Path, cfg: Config) -> Callable[[str], bool]:
 
 
 def _run(cmd: str, cwd: Path, timeout: int) -> tuple[int, str]:
-    try:
-        p = subprocess.run(
-            cmd,
-            cwd=str(cwd),
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env=_CLEAN_ENV,
-        )
-        return p.returncode, (p.stdout + p.stderr)
-    except subprocess.TimeoutExpired:
-        return 124, f"(gate command timed out after {timeout}s: {cmd})"
+    o = proc.run_shell(cmd, cwd, timeout)
+    return (
+        (124, f"(gate command timed out after {timeout}s: {cmd})")
+        if o.timed_out
+        else (o.returncode, o.output)
+    )
 
 
 def test_files_intact(node: Node, worktree: Path) -> list[str]:
