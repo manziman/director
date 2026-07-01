@@ -37,8 +37,11 @@ _IS_POSIX = os.name != "nt"
 
 def setUpModule():
     """Refresh proc after provider registry isolation tests reload director.provider."""
+    import director.codex as codex
+
     importlib.reload(provider)
     importlib.reload(proc)
+    importlib.reload(codex)
 
 
 # --------------------------------------------------------------------------- #

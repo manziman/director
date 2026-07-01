@@ -34,11 +34,13 @@ _OPENCODE_SRC = pathlib.Path(__file__).resolve().parent.parent / "director" / "o
 def setUpModule():
     """Refresh OpenCode adapter after provider registry isolation tests reload provider."""
     import director.claudecode as cc
+    import director.codex as codex
     import director.provider as provider
 
     importlib.reload(provider)
     importlib.reload(cc)
     importlib.reload(oc)
+    importlib.reload(codex)
 
 
 # --------------------------------------------------------------------------- #

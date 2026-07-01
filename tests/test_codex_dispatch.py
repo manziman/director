@@ -49,6 +49,7 @@ def _import_then_resolve_codex(import_stmt: str) -> subprocess.CompletedProcess:
         env={**os.environ, "PYTHONPATH": _REPO_ROOT},
     )
 
+
 # NOTE: director.codex is deliberately NOT imported at module scope. Importing
 # director.opencode below must be what pulls CodexProvider into the registry
 # (via the side-effect import wired into director/opencode.py). Tests that need

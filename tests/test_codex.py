@@ -11,15 +11,17 @@ is invoked.
 tests therefore patch that delegation seam
 (`director.codex.proc_mod.popen_tree` / `...proc_mod.kill_tree`).
 
-Both this parser AND its fixtures are written against the FIXED "assumed Codex
-output contract" in the node spec — recognized object shapes keyed by `type`:
-  message:   {"type":"message","role":"assistant","content":"<text>"}
-  tool_call: {"type":"tool_call","name":"<tool>","status":"<status>"}
-  usage:     {"type":"usage","input_tokens":int,"output_tokens":int,
-              "reasoning_tokens":int,"cache_read_tokens":int,
-              "cache_write_tokens":int,"total_tokens":int}
-  cost:      {"type":"cost","amount":float}
-  error:     {"type":"error","message":"<msg>"}
+Both this parser AND its fixtures follow the REAL `codex exec --json` JSONL
+event contract (verified against codex-cli 0.139) — shapes keyed by `type`:
+  item.completed: {"type":"item.completed","item":{"id":...,"type":"agent_message",
+                   "text":"<text>"}} (tool work uses item types like
+                   command_execution / file_change / mcp_tool_call, with "status")
+  turn.completed: {"type":"turn.completed","usage":{"input_tokens":int,
+                   "cached_input_tokens":int,"output_tokens":int,
+                   "reasoning_output_tokens":int}}
+  error:          {"type":"error","message":"<msg>"}
+  turn.failed:    {"type":"turn.failed","error":{"message":"<msg>"}}
+Codex emits no cost events; cost_reported stays 0.0 (pricing config handles $).
 
 Run: python3 -m unittest discover -s tests -p test_codex.py -q
 """
@@ -38,6 +40,8 @@ from unittest import mock
 os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
+import importlib  # noqa: E402
+
 import director.codex as codex_mod  # noqa: E402
 from director.codex import (  # noqa: E402
     CODEX_MODELS,
@@ -48,9 +52,42 @@ from director.codex import (  # noqa: E402
 from director.provider import RunResult, resolve  # noqa: E402
 
 
+def setUpModule():
+    """Refresh codex adapter after provider registry isolation tests reload provider."""
+    global CODEX_MODELS, CodexProvider, _parse_codex, run_codex, RunResult, resolve
+    import director.claudecode as cc
+    import director.opencode as oc
+    import director.provider as provider
+
+    importlib.reload(provider)
+    importlib.reload(cc)
+    importlib.reload(oc)
+    importlib.reload(codex_mod)
+
+    CODEX_MODELS = codex_mod.CODEX_MODELS
+    CodexProvider = codex_mod.CodexProvider
+    _parse_codex = codex_mod._parse_codex
+    run_codex = codex_mod.run_codex
+    RunResult = provider.RunResult
+    resolve = provider.resolve
+
+
 # --------------------------------------------------------------------------- #
 # _parse_codex — shape-tolerant parser
 # --------------------------------------------------------------------------- #
+def _msg(text, item_id="item_0"):
+    """A completed agent_message item event (real codex --json shape)."""
+    return {
+        "type": "item.completed",
+        "item": {"id": item_id, "type": "agent_message", "text": text},
+    }
+
+
+def _tool(item_type="command_execution", status="completed", **fields):
+    """A completed tool-work item event (real codex --json shape)."""
+    return {"type": "item.completed", "item": {"type": item_type, "status": status, **fields}}
+
+
 class TestParseCodex(unittest.TestCase):
     def _write(self, tmp, name, payload):
         p = Path(tmp) / name
@@ -59,9 +96,7 @@ class TestParseCodex(unittest.TestCase):
 
     def test_single_json_object_message(self):
         with tempfile.TemporaryDirectory() as d:
-            payload = json.dumps(
-                {"type": "message", "role": "assistant", "content": "hello world"}
-            )
+            payload = json.dumps(_msg("hello world"))
             p = self._write(d, "out.log", payload)
             r = _parse_codex(p, 0, False)
             self.assertIsInstance(r, RunResult)
@@ -73,12 +108,7 @@ class TestParseCodex(unittest.TestCase):
 
     def test_json_array_accumulates_content(self):
         with tempfile.TemporaryDirectory() as d:
-            payload = json.dumps(
-                [
-                    {"type": "message", "role": "assistant", "content": "part1 "},
-                    {"type": "message", "role": "assistant", "content": "part2"},
-                ]
-            )
+            payload = json.dumps([_msg("part1 "), _msg("part2", item_id="item_1")])
             p = self._write(d, "out.log", payload)
             r = _parse_codex(p, 0, False)
             self.assertEqual(r.text, "part1 part2")
@@ -87,9 +117,11 @@ class TestParseCodex(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             payload = "\n".join(
                 [
-                    json.dumps({"type": "message", "role": "assistant", "content": "a "}),
+                    json.dumps({"type": "thread.started", "thread_id": "t1"}),
+                    json.dumps({"type": "turn.started"}),
+                    json.dumps(_msg("a ")),
                     "not json at all",
-                    json.dumps({"type": "message", "role": "assistant", "content": "b"}),
+                    json.dumps(_msg("b", item_id="item_1")),
                 ]
             )
             p = self._write(d, "out.log", payload)
@@ -110,7 +142,7 @@ class TestParseCodex(unittest.TestCase):
         # single json.loads fails; the '{'-prefixed line also fails to parse ->
         # no records at all -> raw-stdout-as-text degradation.
         with tempfile.TemporaryDirectory() as d:
-            raw = '{"type": "message", "content": '  # truncated / malformed
+            raw = '{"type": "item.completed", "item": '  # truncated / malformed
             p = self._write(d, "out.log", raw)
             r = _parse_codex(p, 0, False)
             self.assertEqual(r.text, raw.strip())
@@ -127,13 +159,13 @@ class TestParseCodex(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             payload = json.dumps(
                 {
-                    "type": "usage",
-                    "input_tokens": 100,
-                    "output_tokens": 50,
-                    "reasoning_tokens": 7,
-                    "cache_read_tokens": 10,
-                    "cache_write_tokens": 5,
-                    "total_tokens": 172,
+                    "type": "turn.completed",
+                    "usage": {
+                        "input_tokens": 100,
+                        "cached_input_tokens": 10,
+                        "output_tokens": 50,
+                        "reasoning_output_tokens": 7,
+                    },
                 }
             )
             p = self._write(d, "out.log", payload)
@@ -142,13 +174,13 @@ class TestParseCodex(unittest.TestCase):
             self.assertEqual(r.tokens["output"], 50)
             self.assertEqual(r.tokens["reasoning"], 7)
             self.assertEqual(r.tokens["cache_read"], 10)
-            self.assertEqual(r.tokens["cache_write"], 5)
-            self.assertEqual(r.tokens["total"], 172)
+            self.assertEqual(r.tokens["cache_write"], 0)  # codex reports no cache writes
+            self.assertEqual(r.tokens["total"], 150)  # input + output
 
     def test_usage_total_defaults_to_input_plus_output(self):
         with tempfile.TemporaryDirectory() as d:
             payload = json.dumps(
-                {"type": "usage", "input_tokens": 12, "output_tokens": 8}
+                {"type": "turn.completed", "usage": {"input_tokens": 12, "output_tokens": 8}}
             )
             p = self._write(d, "out.log", payload)
             r = _parse_codex(p, 0, False)
@@ -158,50 +190,60 @@ class TestParseCodex(unittest.TestCase):
 
     def test_usage_missing_keys_default_zero(self):
         with tempfile.TemporaryDirectory() as d:
-            payload = json.dumps(
-                {"type": "message", "role": "assistant", "content": "hi"}
-            )
+            payload = json.dumps(_msg("hi"))
             p = self._write(d, "out.log", payload)
             r = _parse_codex(p, 0, False)
             for k in ("input", "output", "reasoning", "cache_read", "cache_write", "total"):
                 self.assertEqual(r.tokens[k], 0)
 
-    def test_cost_reported(self):
-        with tempfile.TemporaryDirectory() as d:
-            payload = json.dumps({"type": "cost", "amount": 0.0123})
-            p = self._write(d, "out.log", payload)
-            r = _parse_codex(p, 0, False)
-            self.assertAlmostEqual(r.cost_reported, 0.0123)
-
-    def test_tool_call_recorded(self):
-        with tempfile.TemporaryDirectory() as d:
-            payload = json.dumps(
-                {"type": "tool_call", "name": "shell", "status": "completed"}
-            )
-            p = self._write(d, "out.log", payload)
-            r = _parse_codex(p, 0, False)
-            self.assertEqual(r.tool_calls, [("shell", "completed")])
-            self.assertEqual(r.n_steps, 1)
-            self.assertEqual(len(r.tool_events), 1)
-            ev = r.tool_events[0]
-            self.assertEqual(ev["name"], "shell")
-            self.assertEqual(ev["status"], "completed")
-
-    def test_multiple_tool_calls_counted_in_n_steps(self):
+    def test_cost_stays_zero_codex_reports_no_cost(self):
+        # The codex --json stream has no cost events; $ comes from pricing config.
         with tempfile.TemporaryDirectory() as d:
             payload = "\n".join(
                 [
-                    json.dumps({"type": "tool_call", "name": "shell", "status": "ok"}),
-                    json.dumps({"type": "tool_call", "name": "edit", "status": "ok"}),
+                    json.dumps(_msg("done")),
                     json.dumps(
-                        {"type": "message", "role": "assistant", "content": "done"}
+                        {
+                            "type": "turn.completed",
+                            "usage": {"input_tokens": 5, "output_tokens": 2},
+                        }
                     ),
                 ]
             )
             p = self._write(d, "out.log", payload)
             r = _parse_codex(p, 0, False)
-            self.assertEqual(r.tool_calls, [("shell", "ok"), ("edit", "ok")])
-            self.assertEqual(r.n_steps, 2)
+            self.assertEqual(r.cost_reported, 0.0)
+
+    def test_tool_item_recorded(self):
+        with tempfile.TemporaryDirectory() as d:
+            payload = json.dumps(_tool("command_execution", "completed", command="ls"))
+            p = self._write(d, "out.log", payload)
+            r = _parse_codex(p, 0, False)
+            self.assertEqual(r.tool_calls, [("command_execution", "completed")])
+            self.assertEqual(r.n_steps, 1)
+            self.assertEqual(len(r.tool_events), 1)
+            ev = r.tool_events[0]
+            self.assertEqual(ev["name"], "command_execution")
+            self.assertEqual(ev["status"], "completed")
+            self.assertIn("ls", ev["blob"])
+
+    def test_multiple_items_counted_in_n_steps(self):
+        with tempfile.TemporaryDirectory() as d:
+            payload = "\n".join(
+                [
+                    json.dumps(_tool("command_execution", "completed")),
+                    json.dumps(_tool("file_change", "completed")),
+                    json.dumps(_msg("done")),
+                ]
+            )
+            p = self._write(d, "out.log", payload)
+            r = _parse_codex(p, 0, False)
+            self.assertEqual(
+                r.tool_calls,
+                [("command_execution", "completed"), ("file_change", "completed")],
+            )
+            # every completed item is a step: 2 tools + 1 agent message
+            self.assertEqual(r.n_steps, 3)
             self.assertEqual(r.text, "done")
 
     def test_error_object_surfaces_message(self):
@@ -210,6 +252,13 @@ class TestParseCodex(unittest.TestCase):
             p = self._write(d, "out.log", payload)
             r = _parse_codex(p, 0, False)
             self.assertEqual(r.error, "API rate limited")
+
+    def test_turn_failed_surfaces_error_message(self):
+        with tempfile.TemporaryDirectory() as d:
+            payload = json.dumps({"type": "turn.failed", "error": {"message": "model rejected"}})
+            p = self._write(d, "out.log", payload)
+            r = _parse_codex(p, 0, False)
+            self.assertEqual(r.error, "model rejected")
 
     def test_timeout_direct_call(self):
         with tempfile.TemporaryDirectory() as d:
@@ -228,9 +277,7 @@ class TestParseCodex(unittest.TestCase):
 
     def test_nonzero_exit_with_text_keeps_error_none(self):
         with tempfile.TemporaryDirectory() as d:
-            payload = json.dumps(
-                {"type": "message", "role": "assistant", "content": "partial"}
-            )
+            payload = json.dumps(_msg("partial"))
             p = self._write(d, "out.log", payload)
             r = _parse_codex(p, 1, False)
             self.assertIsNone(r.error)
@@ -337,9 +384,7 @@ class TestRunCodexDelegatesToProc(unittest.TestCase):
             return run_codex(**kwargs)
 
     def test_proc_mod_alias_is_the_proc_module(self):
-        self.assertTrue(
-            hasattr(codex_mod, "proc_mod"), "codex must import `proc as proc_mod`"
-        )
+        self.assertTrue(hasattr(codex_mod, "proc_mod"), "codex must import `proc as proc_mod`")
         import director.proc as proc_module
 
         self.assertIs(codex_mod.proc_mod, proc_module)
@@ -362,9 +407,7 @@ class TestRunCodexDelegatesToProc(unittest.TestCase):
     def test_builds_codex_exec_command(self):
         with tempfile.TemporaryDirectory() as d:
             log_path = Path(d) / "logs" / "run.json"
-            payload = json.dumps(
-                {"type": "message", "role": "assistant", "content": "ok"}
-            ).encode()
+            payload = json.dumps(_msg("ok")).encode()
             factory = _PopenTreeFactory(payload=payload, rc=0)
             r = self._run(
                 factory,
@@ -379,10 +422,13 @@ class TestRunCodexDelegatesToProc(unittest.TestCase):
             # subcommand `codex exec`
             self.assertEqual(cmd[0], "codex")
             self.assertIn("exec", cmd)
+            # structured JSONL output — without it the stream is unparseable
+            self.assertIn("--json", cmd)
+            # codex sandboxes by default; the agent must be able to edit files
+            # (director isolates runs in disposable worktrees)
+            self.assertIn("--dangerously-bypass-approvals-and-sandbox", cmd)
             # model passed via -m / --model (already prefix-stripped by caller)
-            self.assertTrue(
-                "-m" in cmd or "--model" in cmd, "model must be passed via -m/--model"
-            )
+            self.assertTrue("-m" in cmd or "--model" in cmd, "model must be passed via -m/--model")
             flag = "-m" if "-m" in cmd else "--model"
             self.assertEqual(cmd[cmd.index(flag) + 1], "gpt-5-codex")
             # prompt is the LAST positional argument (possibly with sp preamble)
@@ -611,12 +657,13 @@ class TestCodexProvider(unittest.TestCase):
     def test_system_prompt_for_delegates_to_loader(self):
         from director.claudecode import system_prompt_for as loader
 
-        self.assertEqual(
-            CodexProvider().system_prompt_for("planner"), loader("planner")
-        )
+        self.assertEqual(CodexProvider().system_prompt_for("planner"), loader("planner"))
 
     def test_discover_models_returns_prefixed_aliases(self):
-        self.assertEqual(CodexProvider().discover_models(), ["codex/gpt-5-codex"])
+        self.assertEqual(
+            CodexProvider().discover_models(),
+            [f"codex/{m}" for m in codex_mod.CODEX_MODELS],
+        )
 
     def test_discover_models_never_raises(self):
         # Force iteration over CODEX_MODELS to blow up; must degrade to [].
@@ -628,7 +675,11 @@ class TestCodexProvider(unittest.TestCase):
         self.assertEqual(result, [])
 
     def test_codex_models_constant(self):
-        self.assertEqual(CODEX_MODELS, ("gpt-5-codex",))
+        self.assertIsInstance(CODEX_MODELS, tuple)
+        self.assertTrue(CODEX_MODELS, "CODEX_MODELS must list at least one alias")
+        for alias in CODEX_MODELS:
+            self.assertIsInstance(alias, str)
+            self.assertNotIn("/", alias, "aliases are stored without the codex/ prefix")
 
     def test_provider_registered(self):
         prov = resolve("codex")

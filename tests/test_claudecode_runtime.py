@@ -37,10 +37,12 @@ _CLAUDECODE_SRC = pathlib.Path(__file__).resolve().parent.parent / "director" / 
 def setUpModule():
     """Refresh Claude Code adapter after provider registry isolation tests reload provider."""
     global _RunResult
+    import director.codex as codex
     import director.provider as provider
 
     importlib.reload(provider)
     importlib.reload(cc)
+    importlib.reload(codex)
     _RunResult = provider.RunResult
 
 
