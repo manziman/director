@@ -128,26 +128,23 @@ under `[tiers]`:
 
 ```toml
 # ~/.director/config.toml
-[tiers.planner]
-model = "anthropic/claude-4-sonnet"
-
-[tiers.executor]
-model = "openai/gpt-4o-mini"
-
-[tiers.reviewer]
-model = "openai/gpt-4o"
+[tiers]
+planner  = "claude-code/opus"
+executor = "openrouter/deepseek/deepseek-v4-pro"
+reviewer = "claude-code/sonnet"
 ```
 
 And a repo file overrides just one role:
 
 ```toml
 # <repo>/.director/config.toml
-[tiers.executor]
-model = "lmstudio/qwen3.6-27b-mtp"
+[tiers]
+executor = "lmstudio/qwen3.6-27b-mtp"
 ```
 
 The resulting effective config uses the repo-local `executor` but falls back to the user
-values for `planner` and `reviewer`.
+values for `planner` and `reviewer` (each role binds to a single `"provider/model"`
+string — the repo `[tiers]` overrides only the roles it names).
 
 ### `director init` target selection
 
