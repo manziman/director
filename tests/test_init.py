@@ -398,6 +398,23 @@ class RunInitTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="fm-init-"))
         self.cfg_path = self.tmp / ".director" / "config.toml"
+        # run_init now auto-detects its target: repo path inside a git repo,
+        # else the user path. Fake a git repo (a plain .git dir — no real git
+        # is ever run) so auto-detect deterministically writes under self.tmp,
+        # and isolate HOME so the user-path fallback can never touch the real
+        # user config.
+        (self.tmp / ".git").mkdir()
+        self._saved_env = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE")}
+        self._home = Path(tempfile.mkdtemp(prefix="fm-init-home-"))
+        os.environ["HOME"] = str(self._home)
+        os.environ["USERPROFILE"] = str(self._home)
+
+    def tearDown(self):
+        for key, val in self._saved_env.items():
+            if val is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = val
 
     def _run(self, *, models, answers):
         """Drive run_init with discovery + interactive builtins stubbed."""

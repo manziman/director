@@ -113,6 +113,47 @@ model (≈ $0 implementation), a low-cost cloud model (zero local infra), or a f
 model (the expensive baseline). See [`director/README.md`](director/README.md) for the
 full architecture (gates, two-stage review, red-green hardening, metrics).
 
+### Two-level configuration
+
+director supports two config levels that are combined at runtime:
+
+- **User-level defaults** live at `~/.director/config.toml`. These apply across all
+  repositories on your machine.
+- **Repo-local overrides** live at `<repo>/.director/config.toml`. These apply only to
+  the current repository and take precedence over user-level settings.
+
+The repo file deep-merges over the user file: nested tables merge recursively, while
+scalars and arrays replace wholesale. For example, a user file might supply several roles
+under `[tiers]`:
+
+```toml
+# ~/.director/config.toml
+[tiers]
+planner  = "claude-code/opus"
+executor = "openrouter/deepseek/deepseek-v4-pro"
+reviewer = "claude-code/sonnet"
+```
+
+And a repo file overrides just one role:
+
+```toml
+# <repo>/.director/config.toml
+[tiers]
+executor = "lmstudio/qwen3.6-27b-mtp"
+```
+
+The resulting effective config uses the repo-local `executor` but falls back to the user
+values for `planner` and `reviewer` (each role binds to a single `"provider/model"`
+string — the repo `[tiers]` overrides only the roles it names).
+
+### `director init` target selection
+
+`director init` auto-detects its write target: inside a git repo it writes `<repo>/.director/config.toml`; outside any git repo it writes `~/.director/config.toml`. You can override this behavior with flags (mutually exclusive):
+
+- `--user` forces the user-level target (`~/.director/config.toml`).
+- `--local` forces the repo-level target (`<repo>/.director/config.toml`).
+- `--repo PATH` still sets the target directory explicitly.
+
 ### Comparing setups with `bench`
 
 `director bench` plans a task once, then runs the **same** frozen acceptance tests under

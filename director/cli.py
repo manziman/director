@@ -82,10 +82,22 @@ def cmd_sync_agents(args) -> int:
 
 
 def cmd_init(args) -> int:
-    from director.init import run_init
+    from pathlib import Path as _Path
 
-    path = run_init(args.repo)
-    print(f"Wrote {path}")
+    from director.init import is_inside_git_repo, run_init
+
+    path = run_init(args.repo, user=args.user, local=args.local)
+    print(f"Wrote {path.resolve()}")
+    if args.user:
+        print("Target forced to user-level via --user.")
+    elif args.local:
+        print("Target forced to repo-level via --local.")
+    else:
+        inside = is_inside_git_repo(_Path(args.repo))
+        if inside:
+            print("Auto-detected: target is a git repo, config written locally.")
+        else:
+            print("Auto-detected: not inside a git repo, config written to user-level location.")
     return 0
 
 
@@ -167,6 +179,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     pi = sub.add_parser("init", help="interactively configure .director/config.toml")
     pi.add_argument("--repo", default=".")
+    mut = pi.add_mutually_exclusive_group()
+    mut.add_argument("--user", action="store_true")
+    mut.add_argument("--local", action="store_true")
     pi.set_defaults(func=cmd_init)
 
     return p
