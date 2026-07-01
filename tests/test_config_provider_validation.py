@@ -43,7 +43,7 @@ class ConfigProviderValidationTests(unittest.TestCase):
         self.assertIn("unknown provider 'lmstudio'", msg)
         self.assertIn("tier 'lmstudio/qwen3.6-27b-mtp'", msg)
         self.assertIn("opencode/lmstudio/qwen3.6-27b-mtp", msg)
-        self.assertIn("Known providers: claude-code, opencode", msg)
+        self.assertIn("Known providers: claude-code, codex, opencode", msg)
 
     def test_canonical_claude_code_and_opencode_tiers_load(self):
         tiers = {
@@ -72,6 +72,22 @@ class ConfigProviderValidationTests(unittest.TestCase):
         self.assertIn("unknown provider 'amazon-bedrock'", msg)
         self.assertIn("pricing key 'amazon-bedrock/anthropic.claude-sonnet-4-6'", msg)
         self.assertIn("opencode/amazon-bedrock/anthropic.claude-sonnet-4-6", msg)
+
+    def test_codex_tiers_load(self):
+        tiers = dict.fromkeys(ROLES, "codex/gpt-5-codex")
+        path = _write(_toml_for(tiers))
+
+        cfg = config.load_file(path)
+
+        self.assertEqual(cfg.tiers, tiers)
+
+    def test_codex_pricing_key_validates(self):
+        tiers = dict.fromkeys(ROLES, "claude-code/opus")
+        path = _write(_toml_for(tiers, pricing_key="codex/gpt-5-codex"))
+
+        cfg = config.load_file(path)
+
+        self.assertIn("codex/gpt-5-codex", cfg.pricing)
 
 
 if __name__ == "__main__":

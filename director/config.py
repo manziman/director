@@ -112,9 +112,9 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 def _ensure_builtin_providers_registered():
     """Import built-in providers and ensure the current registry has their keys."""
-    from director import claudecode, opencode, provider
+    from director import claudecode, codex, opencode, provider
 
-    for provider_cls in (claudecode.ClaudeCodeProvider, opencode.OpenCodeProvider):
+    for provider_cls in (claudecode.ClaudeCodeProvider, codex.CodexProvider, opencode.OpenCodeProvider):
         if provider.resolve(provider_cls.name) is None:
             provider.register(provider_cls())
     return provider
