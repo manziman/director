@@ -85,9 +85,8 @@ class InitTargetFlagParsingTests(unittest.TestCase):
 
     def test_user_and_local_are_mutually_exclusive(self):
         # argparse itself must reject supplying both (mutually-exclusive group).
-        with redirect_stderr(io.StringIO()):
-            with self.assertRaises(SystemExit):
-                self.parser.parse_args(["init", "--user", "--local"])
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            self.parser.parse_args(["init", "--user", "--local"])
 
 
 class CmdInitCallTests(unittest.TestCase):

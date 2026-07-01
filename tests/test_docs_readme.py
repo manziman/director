@@ -35,16 +35,14 @@ class TwoLevelConfigDocumentedTests(unittest.TestCase):
         self.assertIn(
             "~/.director/config.toml",
             self.text,
-            "README must document the user-level defaults path "
-            "'~/.director/config.toml'.",
+            "README must document the user-level defaults path '~/.director/config.toml'.",
         )
 
     def test_repo_local_path_present(self):
         self.assertIn(
             "<repo>/.director/config.toml",
             self.text,
-            "README must document the repo-local overrides path "
-            "'<repo>/.director/config.toml'.",
+            "README must document the repo-local overrides path '<repo>/.director/config.toml'.",
         )
 
     def test_tiers_example_present(self):

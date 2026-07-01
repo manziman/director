@@ -82,8 +82,9 @@ def cmd_sync_agents(args) -> int:
 
 
 def cmd_init(args) -> int:
-    from director.init import is_inside_git_repo, run_init
     from pathlib import Path as _Path
+
+    from director.init import is_inside_git_repo, run_init
 
     path = run_init(args.repo, user=args.user, local=args.local)
     print(f"Wrote {path.resolve()}")

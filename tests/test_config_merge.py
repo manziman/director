@@ -30,7 +30,6 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from director import config  # noqa: E402
 from director.config import ROLES  # noqa: E402
 
-
 # --------------------------------------------------------------------------- #
 # TOML fixtures
 # --------------------------------------------------------------------------- #
@@ -256,25 +255,25 @@ class LoadBothMergeTests(_HomeIsolationMixin, unittest.TestCase):
 
     def test_tiers_override_and_fallback(self):
         self.assertEqual(self.cfg.tiers["executor"], "repo/exec")  # overridden
-        self.assertEqual(self.cfg.tiers["planner"], "user/plan")   # fallback
+        self.assertEqual(self.cfg.tiers["planner"], "user/plan")  # fallback
 
     def test_gates_override_and_fallback(self):
-        self.assertEqual(self.cfg.gates["lint"], "repo-lint-cmd")   # overridden
-        self.assertEqual(self.cfg.gates["test"], "user-test-cmd")   # fallback
+        self.assertEqual(self.cfg.gates["lint"], "repo-lint-cmd")  # overridden
+        self.assertEqual(self.cfg.gates["test"], "user-test-cmd")  # fallback
         self.assertEqual(self.cfg.gates["typecheck"], "user-tc-cmd")  # fallback
 
     def test_limits_override_and_fallback(self):
-        self.assertEqual(self.cfg.limits["max_attempts"], 9)             # overridden
-        self.assertEqual(self.cfg.limits["node_timeout_secs"], 100)      # fallback
-        self.assertEqual(self.cfg.limits["cost_ceiling_usd"], 5.0)       # fallback
+        self.assertEqual(self.cfg.limits["max_attempts"], 9)  # overridden
+        self.assertEqual(self.cfg.limits["node_timeout_secs"], 100)  # fallback
+        self.assertEqual(self.cfg.limits["cost_ceiling_usd"], 5.0)  # fallback
 
     def test_providers_local_override_and_fallback(self):
-        self.assertEqual(self.cfg.local["api_key"], "repo-key")             # overridden
+        self.assertEqual(self.cfg.local["api_key"], "repo-key")  # overridden
         self.assertEqual(self.cfg.local["base_url"], "http://user-host:1234")  # fallback
 
     def test_sampling_role_override_and_fallback(self):
-        self.assertEqual(self.cfg.sampling["planner"]["top_p"], 0.5)         # overridden
-        self.assertEqual(self.cfg.sampling["planner"]["temperature"], 0.1)   # fallback
+        self.assertEqual(self.cfg.sampling["planner"]["top_p"], 0.5)  # overridden
+        self.assertEqual(self.cfg.sampling["planner"]["temperature"], 0.1)  # fallback
 
     def test_user_only_table_passes_through(self):
         # pricing exists only in the user config; it must survive the merge.
@@ -340,9 +339,9 @@ class LoadFileIgnoresUserConfigTests(_HomeIsolationMixin, unittest.TestCase):
         repo_cfg = _write(self.repo, REPO_FULL_TOML)
         cfg = config.load_file(repo_cfg)
         self.assertEqual(cfg.tiers["planner"], "repo/plan")
-        self.assertNotIn("lint", cfg.gates)          # user's lint not merged
-        self.assertEqual(cfg.local, {})              # user's providers.local not merged
-        self.assertNotIn("user/plan", cfg.pricing)   # user's pricing not merged
+        self.assertNotIn("lint", cfg.gates)  # user's lint not merged
+        self.assertEqual(cfg.local, {})  # user's providers.local not merged
+        self.assertNotIn("user/plan", cfg.pricing)  # user's pricing not merged
 
 
 if __name__ == "__main__":

@@ -27,9 +27,7 @@ def _text():
 
 def _comment_blob():
     """Concatenation of only the comment lines (lines whose lstrip starts with '#')."""
-    return "\n".join(
-        ln for ln in _text().splitlines() if ln.lstrip().startswith("#")
-    )
+    return "\n".join(ln for ln in _text().splitlines() if ln.lstrip().startswith("#"))
 
 
 class TwoLevelLookupDocumentedTests(unittest.TestCase):
