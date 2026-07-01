@@ -1,5 +1,12 @@
 # director configuration — copy to .director/config.toml and edit.
 #
+# Two-level lookup: user defaults are read from ~/.director/config.toml first;
+# repo-local overrides live at <repo>/.director/config.toml and override the user
+# file via a recursive per-sub-key deep merge (table keys merge recursively, while
+# scalars and arrays replace the user value wholesale — arrays are NOT concatenated).
+# Profiles loaded by explicit path (bench or setup) are single-file configurations
+# and do not participate in this two-level merge.
+#
 # `director sync-agents` drops this file at .director/config.toml for you if none
 # exists. Everything director knows about a "model" comes from here; switching
 # models is a config edit, never a code change.
