@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import director.runtime as runtime
-from director.config import ROLES
+from director.config import ROLES, _user_config_path
 
 
 def parse_models(text: str) -> list[str]:
@@ -100,15 +100,40 @@ def render_config(tiers: dict[str, str], gates: dict[str, str]) -> str:
     return "\n".join(parts) + "\n"
 
 
-def run_init(repo: str) -> Path:
-    """Orchestrate the interactive init flow and write `.director/config.toml`."""
-    cfg_path = Path(repo) / ".director" / "config.toml"
+def is_inside_git_repo(start: Path) -> bool:
+    """Walk up from `start.resolve()` through each parent; return True if any ancestor contains a `.git` directory or file."""
+    current = start.resolve()
+    while True:
+        if (current / ".git").exists():
+            return True
+        parent = current.parent
+        if parent == current:  # reached filesystem root
+            break
+        current = parent
+    return False
 
-    if cfg_path.exists():
+
+def resolve_init_target(repo: str, *, user: bool, local: bool) -> Path:
+    """Return the config file path to write based on user/local flags and git detection."""
+    if user:
+        return _user_config_path()
+    elif local:
+        return Path(repo) / ".director" / "config.toml"
+    else:
+        if is_inside_git_repo(Path(repo)):
+            return Path(repo) / ".director" / "config.toml"
+        return _user_config_path()
+
+
+def run_init(repo: str, *, user: bool = False, local: bool = False) -> Path:
+    """Orchestrate the interactive init flow and write `.director/config.toml`."""
+    target = resolve_init_target(repo, user=user, local=local)
+
+    if target.exists():
         answer = input("config.toml exists; overwrite? [y/N] ").strip().lower()
         if answer not in ("y", "yes"):
             print("aborted; nothing was written.")
-            return cfg_path
+            return target
 
     models = discover_models()
     if not models:
@@ -125,6 +150,6 @@ def run_init(repo: str) -> Path:
     for name in ("test", "lint", "typecheck"):
         gates[name] = prompt_gate(name)
 
-    cfg_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg_path.write_text(render_config(tiers, gates))
-    return cfg_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(render_config(tiers, gates))
+    return target
