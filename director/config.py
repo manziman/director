@@ -88,27 +88,30 @@ class Config:
         return self.target.get("toolchain") or None
 
 
-def load(repo: Path) -> Config:
-    """Load the active config from <repo>/.director/config.toml."""
-    path = Path(repo) / ".director" / "config.toml"
-    if not path.exists():
-        raise FileNotFoundError(
-            f"{path} not found. Run `director init` to create it interactively."
-        )
-    return load_file(path)
+def _user_config_path() -> Path:
+    """Return the path to the user-level config file."""
+    return Path.home() / ".director" / "config.toml"
 
 
-def load_file(path: Path) -> Config:
-    """Load a Config from a specific TOML path (e.g. a profile). Used by
-    `director bench` to load each profile WITHOUT swapping the active
-    config.toml — run_plan/run_job take a Config object, so bench never has to
-    mutate (and thereby dirty) the tracked config.toml on disk."""
-    path = Path(path)
-    if not path.exists():
-        raise FileNotFoundError(f"{path} not found.")
-    with path.open("rb") as f:
-        data = tomllib.load(f)
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Recursively deep-merge *override* into a copy of *base*.
 
+    Returns a NEW dict; does NOT mutate either input. For keys present in both
+    whose values are dicts the merge recurses (arbitrary depth).  Scalars,
+    lists/arrays, and dict-vs-non-dict all REPLACE wholesale — arrays are never
+    concatenated or element-merged.
+    """
+    result = {**base}
+    for key, value in override.items():
+        if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(base[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def _build_config(data: dict, path: Path) -> Config:
+    """Validate tiers completeness and construct a Config from parsed data."""
     tiers = data.get("tiers", {})
     missing = [r for r in ROLES if r not in tiers]
     if missing:
@@ -125,3 +128,40 @@ def load_file(path: Path) -> Config:
         review=data.get("review", {}),
         target=data.get("target", {}),
     )
+
+
+def load(repo: Path) -> Config:
+    """Load the active config, merging user-level then repo-level configs."""
+    user_path = _user_config_path()
+    repo_path = Path(repo) / ".director" / "config.toml"
+
+    if not user_path.exists() and not repo_path.exists():
+        raise FileNotFoundError(
+            f"{repo_path} not found. Run `director init` to create it interactively."
+        )
+
+    data: dict = {}
+    if user_path.exists():
+        with user_path.open("rb") as f:
+            data = tomllib.load(f)
+    if repo_path.exists():
+        with repo_path.open("rb") as f:
+            repo_data = tomllib.load(f)
+        data = _deep_merge(data, repo_data)
+
+    active_path = repo_path if repo_path.exists() else user_path
+    return _build_config(data, active_path)
+
+
+def load_file(path: Path) -> Config:
+    """Load a Config from a specific TOML path (e.g. a profile). Used by
+    `director bench` to load each profile WITHOUT swapping the active
+    config.toml — run_plan/run_job take a Config object, so bench never has to
+    mutate (and thereby dirty) the tracked config.toml on disk."""
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"{path} not found.")
+    with path.open("rb") as f:
+        data = tomllib.load(f)
+
+    return _build_config(data, path)
