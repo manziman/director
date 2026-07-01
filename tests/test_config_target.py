@@ -154,7 +154,6 @@ class TestTargetDoesNotBreakExistingConstruction(unittest.TestCase):
             pricing={},
             limits={},
             sampling={},
-            local={},
             review={},
         )
         self.assertEqual(cfg.target, {})

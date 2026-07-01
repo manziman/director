@@ -37,7 +37,6 @@ def _opencode_cfg() -> Config:
         pricing={},
         limits={},
         sampling={},
-        local={},
         review={},
     )
 

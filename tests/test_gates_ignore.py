@@ -40,7 +40,6 @@ def _mk_config(gates: dict | None = None) -> Config:
         pricing={},
         limits={"flake_runs": 1, "node_timeout_secs": 60, "max_attempts": 2},
         sampling={},
-        local={},
         review={},
     )
 
