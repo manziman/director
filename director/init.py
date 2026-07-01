@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import director.claudecode  # noqa: F401 — ensures ClaudeCodeProvider registers
+import director.codex  # noqa: F401 — ensures CodexProvider registers
 import director.opencode  # noqa: F401 — ensures OpenCodeProvider registers
 import director.provider as provider
 from director.config import ROLES, _user_config_path

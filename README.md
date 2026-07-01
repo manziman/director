@@ -1,6 +1,6 @@
 # director
 
-**A model-agnostic decomposition coding harness — a thin orchestrator over agent providers ([OpenCode](https://opencode.ai), Claude Code, …).**
+**A model-agnostic decomposition coding harness — a thin orchestrator over agent providers ([OpenCode](https://opencode.ai), Claude Code, Codex, …).**
 
 director tests one hypothesis:
 
@@ -12,7 +12,7 @@ director tests one hypothesis:
 
 It is **model-agnostic by construction**: roles (`planner`, `executor`, `reviewer`, …)
 bind to `provider/model-ref` strings in config. The provider is the tool director
-drives (`opencode` or `claude-code`); the rest of the tier string is whatever that
+drives (`opencode`, `claude-code`, or `codex`); the rest of the tier string is whatever that
 tool expects. Switching the executor from a local 27B to a frontier model — or
 anything in between — is a one-line config edit, never a code change.
 
@@ -42,7 +42,8 @@ director orchestrates other tools rather than replacing them, so it needs:
 - **git** on `PATH` (isolation is real git worktrees + branches)
 - **[OpenCode](https://opencode.ai)** on `PATH`, if you use an `opencode/*` tier
 - **Claude Code** (`claude`) on `PATH`, if you use a `claude-code/*` tier
-- **Provider auth**: if you use OpenCode tiers, configure auth in OpenCode via `opencode auth`; Claude Code tiers use the Claude Code CLI's own auth
+- **Codex** (`codex`) on `PATH`, if you use a `codex/*` tier (e.g. `codex/gpt-5-codex`; runs via the OpenAI Codex CLI)
+- **Provider auth**: if you use OpenCode tiers, configure auth in OpenCode via `opencode auth`; Claude Code tiers use the Claude Code CLI's own auth; Codex tiers use the Codex CLI's own auth
 
 director never manages model-provider keys itself — each tool handles its own credentials.
 

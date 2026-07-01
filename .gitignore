@@ -27,5 +27,8 @@ dist/
 # retained locally, not published
 docs/lessons-learned.md
 
-
+# stray json artifacts — but NEVER the packaged agent templates: hatchling
+# honors these patterns when building, so ignoring them drops package data
+# from the wheel (broke the 0.8.1 release).
 *.json
+!director/agent_templates/*.json

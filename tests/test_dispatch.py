@@ -43,9 +43,12 @@ def setUpModule():
     """Refresh adapter modules after provider registry isolation tests reload provider."""
     global RunResult, _run_opencode, run_agent, watch_it_fail
 
+    import director.codex as _codex
+
     importlib.reload(rt)
     importlib.reload(cc)
     importlib.reload(oc)
+    importlib.reload(_codex)
     from director.opencode import RunResult as _RunResult
     from director.opencode import _run_opencode as _opencode_runner
     from director.opencode import run_agent as _run_agent

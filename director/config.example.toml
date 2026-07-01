@@ -20,6 +20,8 @@
 # always the tool director drives:
 #   - "claude-code/<model>" → Claude Code CLI (`claude`); <model> is passed to
 #                             `claude --model` (e.g. "claude-code/opus")
+#   - "codex/<model>" → OpenAI Codex CLI; <model> is passed to
+#                        `codex exec`'s model flag (e.g. "codex/gpt-5-codex")
 #   - "opencode/<model-ref>" → OpenCode CLI; <model-ref> is whatever
 #                              `opencode run --model` expects, e.g.
 #                              "opencode/anthropic/claude-opus-4-8",

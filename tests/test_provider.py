@@ -30,10 +30,12 @@ def tearDownModule():
     """Restore built-in provider modules after tests that reload director.provider."""
     importlib.reload(rt)
     import director.claudecode as cc
+    import director.codex as codex
     import director.opencode as oc
 
     importlib.reload(cc)
     importlib.reload(oc)
+    importlib.reload(codex)
 
 
 def _fresh():

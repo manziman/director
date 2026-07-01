@@ -29,10 +29,12 @@ _CC_SRC = pathlib.Path(__file__).resolve().parent.parent / "director" / "claudec
 
 def setUpModule():
     """Refresh Claude Code adapter after provider registry isolation tests reload provider."""
+    import director.codex as codex
     import director.provider as provider
 
     importlib.reload(provider)
     importlib.reload(cc)
+    importlib.reload(codex)
 
 
 EXPECTED_MODELS = ["claude-code/opus", "claude-code/sonnet", "claude-code/haiku"]
