@@ -1,8 +1,8 @@
-"""Acceptance tests for README neutrality — OpenCode and Claude Code as peer runtimes.
+"""Acceptance tests for README neutrality — OpenCode and Claude Code as peer providers.
 
 Both README.md and director/README.md must frame OpenCode and Claude Code as
 interchangeable peers; neither may appear as the sole unconditional prerequisite.
-Tests mirror the style of tests/test_config_example_runtime.py.
+Tests mirror the style of tests/test_config_example_provider.py.
 """
 
 import pathlib
@@ -36,7 +36,7 @@ class ReadmeFilesExistTest(unittest.TestCase):
 
 
 class ReadmeNeutralityTest(unittest.TestCase):
-    """README.md must frame OpenCode and Claude Code as peer runtimes."""
+    """README.md must frame OpenCode and Claude Code as peer providers."""
 
     def setUp(self):
         self.text = _read(_README)
@@ -47,11 +47,11 @@ class ReadmeNeutralityTest(unittest.TestCase):
     # ------------------------------------------------------------------ #
 
     def test_claude_code_named_as_peer(self):
-        """'Claude Code' must appear in README.md as a peer runtime."""
+        """'Claude Code' must appear in README.md as a peer provider."""
         self.assertIn(
             "Claude Code",
             self.text,
-            "README.md must name 'Claude Code' as a peer runtime alongside OpenCode",
+            "README.md must name 'Claude Code' as a peer provider alongside OpenCode",
         )
 
     def test_no_thin_orchestrator_over_opencode(self):
@@ -64,16 +64,16 @@ class ReadmeNeutralityTest(unittest.TestCase):
             self.text_plain,
             "README.md must not contain 'a thin orchestrator over OpenCode' "
             "(checked after stripping markdown links); "
-            "reframe generically around agent runtimes",
+            "reframe generically around agent providers",
         )
 
     def test_no_absolute_parenthetical_agent_runtime(self):
-        """The absolute parenthetical '(the agent runtime director drives)' must be removed."""
+        """The absolute parenthetical '(the agent provider director drives)' must be removed."""
         self.assertNotIn(
-            "(the agent runtime director drives)",
+            "(the agent provider director drives)",
             self.text,
-            "README.md must not contain '(the agent runtime director drives)' — "
-            "it frames OpenCode as the sole unconditional runtime",
+            "README.md must not contain '(the agent provider director drives)' — "
+            "it frames OpenCode as the sole unconditional provider",
         )
 
     # ------------------------------------------------------------------ #
@@ -111,12 +111,12 @@ class ReadmeNeutralityTest(unittest.TestCase):
         )
 
     def test_prerequisites_mentions_claude_code(self):
-        """Prerequisites section must name 'Claude Code' as a runtime option."""
+        """Prerequisites section must name 'Claude Code' as a provider option."""
         prereq = self._prereq_section()
         self.assertIn(
             "Claude Code",
             prereq,
-            "Prerequisites section must mention 'Claude Code' as a runtime option",
+            "Prerequisites section must mention 'Claude Code' as a provider option",
         )
 
     def test_prerequisites_has_conditional_if(self):
@@ -126,7 +126,7 @@ class ReadmeNeutralityTest(unittest.TestCase):
         self.assertIsNotNone(
             match,
             "Prerequisites section must contain a conditional 'if' qualifier "
-            "alongside the runtime prerequisites "
+            "alongside the provider prerequisites "
             "(e.g. 'IF you use an OpenCode-owned provider')",
         )
 
@@ -185,7 +185,7 @@ class ReadmeNeutralityTest(unittest.TestCase):
 
 
 class DirectorReadmeNeutralityTest(unittest.TestCase):
-    """director/README.md must name Claude Code as a peer, not the sole runtime."""
+    """director/README.md must name Claude Code as a peer, not the sole provider."""
 
     def setUp(self):
         self.text = _read(_DIRECTOR_README)
@@ -199,7 +199,7 @@ class DirectorReadmeNeutralityTest(unittest.TestCase):
             preamble,
             "director/README.md opening description must not solely say "
             "'drives OpenCode headlessly'; name Claude Code as a peer or use "
-            "generic 'agent runtimes' language",
+            "generic 'agent providers' language",
         )
 
     def _sync_agents_line(self):

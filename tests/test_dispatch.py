@@ -1,16 +1,15 @@
 """Registry-based dispatch tests for director.opencode.
 
-After the opencode-dispatch refactor, run_agent routes via the runtime registry
+After the opencode-dispatch refactor, run_agent routes via the provider registry
 instead of a hardcoded prefix check. Tests verify:
 
-1. Module surface: OPENCODE_PROVIDERS, no CLAUDE_PREFIX, re-exports from runtime
+1. Module surface: no CLAUDE_PREFIX / OPENCODE_PROVIDERS, re-exports from provider
 2. RunResult / _CLEAN_ENV identity: oc.* is rt.* (same objects)
-3. OPENCODE_PROVIDERS content (required providers, must not contain claude-code)
-4. OpenCodeRuntime class: name, providers, protocol conformance
-5. Registry state after import (both runtimes registered)
-6. Dispatch routing: claude-code/* → ClaudeCodeRuntime, opencode providers → OpenCodeRuntime
+3. OpenCodeProvider class: name and protocol conformance
+4. Registry state after import (both providers registered)
+5. Dispatch routing: claude-code/* → ClaudeCodeProvider, opencode/* → OpenCodeProvider
 7. Unknown provider → error RunResult (never raises, .ok is False, error names provider)
-8. No-elif extensibility: register a dummy runtime, run_agent routes to it
+8. No-elif extensibility: register a dummy provider, run_agent routes to it
 9. Registration collision raises ValueError
 10. Monkeypatchability of run_agent, _run_opencode, run_claude
 
@@ -19,6 +18,7 @@ Run: python3 -m unittest discover -s tests -p test_dispatch.py -q
 
 from __future__ import annotations
 
+import importlib
 import inspect
 import pathlib
 import sys
@@ -30,14 +30,32 @@ import contextlib
 
 import director.claudecode as cc  # noqa: E402
 import director.opencode as oc  # noqa: E402
-import director.runtime as rt  # noqa: E402
+import director.provider as rt  # noqa: E402
 from director.opencode import (  # noqa: E402
-    OPENCODE_PROVIDERS,
     RunResult,
     _run_opencode,
     run_agent,
     watch_it_fail,
 )
+
+
+def setUpModule():
+    """Refresh adapter modules after provider registry isolation tests reload provider."""
+    global RunResult, _run_opencode, run_agent, watch_it_fail
+
+    importlib.reload(rt)
+    importlib.reload(cc)
+    importlib.reload(oc)
+    from director.opencode import RunResult as _RunResult
+    from director.opencode import _run_opencode as _opencode_runner
+    from director.opencode import run_agent as _run_agent
+    from director.opencode import watch_it_fail as _watch_it_fail
+
+    RunResult = _RunResult
+    _run_opencode = _opencode_runner
+    run_agent = _run_agent
+    watch_it_fail = _watch_it_fail
+
 
 # --------------------------------------------------------------------------- #
 # helpers
@@ -48,7 +66,7 @@ def _kwargs(**extra):
     """Build a minimal valid kwargs dict for run_agent."""
     base = {
         "agent": "executor",
-        "model": "lmstudio/qwen3.6-27b",
+        "model": "opencode/lmstudio/qwen3.6-27b",
         "message": "do something",
         "cwd": ".",
         "log_path": "run.json",
@@ -117,11 +135,8 @@ class TestModuleSurface(unittest.TestCase):
             "oc.CLAUDE_PREFIX still exists — prefix dispatch was not removed",
         )
 
-    def test_opencode_providers_exists(self):
-        self.assertTrue(hasattr(oc, "OPENCODE_PROVIDERS"))
-
-    def test_opencode_providers_is_frozenset(self):
-        self.assertIsInstance(OPENCODE_PROVIDERS, frozenset)
+    def test_opencode_providers_allowlist_is_gone(self):
+        self.assertFalse(hasattr(oc, "OPENCODE_PROVIDERS"))
 
     def test_run_agent_present_and_callable(self):
         self.assertTrue(callable(run_agent))
@@ -141,34 +156,31 @@ class TestModuleSurface(unittest.TestCase):
 
     def test_opencode_runtime_class_exported(self):
         self.assertTrue(
-            hasattr(oc, "OpenCodeRuntime"),
-            "director.opencode has no attribute 'OpenCodeRuntime'",
+            hasattr(oc, "OpenCodeProvider"),
+            "director.opencode has no attribute 'OpenCodeProvider'",
         )
 
     def test_opencode_runtime_name(self):
-        self.assertEqual(oc.OpenCodeRuntime.name, "opencode")
+        self.assertEqual(oc.OpenCodeProvider.name, "opencode")
 
-    def test_opencode_runtime_providers_is_frozenset(self):
-        self.assertIsInstance(oc.OpenCodeRuntime.providers, frozenset)
-
-    def test_opencode_runtime_providers_equals_opencode_providers(self):
-        self.assertEqual(oc.OpenCodeRuntime.providers, OPENCODE_PROVIDERS)
+    def test_opencode_provider_declares_name_only(self):
+        self.assertFalse(hasattr(oc.OpenCodeProvider, "providers"))
 
     def test_opencode_runtime_has_run_method(self):
-        self.assertTrue(callable(getattr(oc.OpenCodeRuntime, "run", None)))
+        self.assertTrue(callable(getattr(oc.OpenCodeProvider, "run", None)))
 
     def test_opencode_runtime_has_system_prompt_for(self):
-        self.assertTrue(callable(getattr(oc.OpenCodeRuntime, "system_prompt_for", None)))
+        self.assertTrue(callable(getattr(oc.OpenCodeProvider, "system_prompt_for", None)))
 
     def test_opencode_runtime_system_prompt_for_returns_none(self):
-        inst = oc.OpenCodeRuntime()
+        inst = oc.OpenCodeProvider()
         self.assertIsNone(inst.system_prompt_for("planner"))
 
     def test_opencode_runtime_run_signature(self):
-        sig = inspect.signature(oc.OpenCodeRuntime.run)
+        sig = inspect.signature(oc.OpenCodeProvider.run)
         params = set(sig.parameters.keys()) - {"self"}
         for kw in ("agent", "model", "message", "cwd", "log_path", "timeout"):
-            self.assertIn(kw, params, f"OpenCodeRuntime.run missing kwarg: {kw!r}")
+            self.assertIn(kw, params, f"OpenCodeProvider.run missing kwarg: {kw!r}")
 
 
 # --------------------------------------------------------------------------- #
@@ -202,144 +214,62 @@ class TestReExports(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# 3. OPENCODE_PROVIDERS content
-# --------------------------------------------------------------------------- #
-
-_REQUIRED_PROVIDERS = [
-    "anthropic",
-    "openai",
-    "google",
-    "google-vertex",
-    "amazon-bedrock",
-    "azure",
-    "openrouter",
-    "lmstudio",
-    "deepseek",
-    "groq",
-    "mistral",
-    "togetherai",
-    "fireworks",
-    "xai",
-    "perplexity",
-    "cohere",
-    "cerebras",
-    "deepinfra",
-    "huggingface",
-    "ollama",
-    "github-copilot",
-    "github-models",
-    "requesty",
-    "v0",
-    "inception",
-    "morph",
-    "upstage",
-    "baseten",
-    "nebius",
-    "sambanova",
-    "alibaba",
-    "openai-compatible",
-    "llama",
-]
-
-
-class TestOpenCodeProviders(unittest.TestCase):
-    def test_does_not_contain_claude_code(self):
-        """'claude-code' belongs to ClaudeCodeRuntime, not OpenCodeRuntime."""
-        self.assertNotIn("claude-code", OPENCODE_PROVIDERS)
-
-    def test_contains_all_required_providers(self):
-        missing = [p for p in _REQUIRED_PROVIDERS if p not in OPENCODE_PROVIDERS]
-        self.assertEqual(
-            missing,
-            [],
-            f"OPENCODE_PROVIDERS is missing required providers: {missing}",
-        )
-
-    def test_contains_anthropic(self):
-        self.assertIn("anthropic", OPENCODE_PROVIDERS)
-
-    def test_contains_openai(self):
-        self.assertIn("openai", OPENCODE_PROVIDERS)
-
-    def test_contains_lmstudio(self):
-        self.assertIn("lmstudio", OPENCODE_PROVIDERS)
-
-    def test_contains_amazon_bedrock(self):
-        self.assertIn("amazon-bedrock", OPENCODE_PROVIDERS)
-
-    def test_contains_openrouter(self):
-        self.assertIn("openrouter", OPENCODE_PROVIDERS)
-
-    def test_contains_google(self):
-        self.assertIn("google", OPENCODE_PROVIDERS)
-
-    def test_contains_ollama(self):
-        self.assertIn("ollama", OPENCODE_PROVIDERS)
-
-
-# --------------------------------------------------------------------------- #
-# 4. Registry state after import
+# 3. Registry state after import
 # --------------------------------------------------------------------------- #
 
 
 class TestRegistryOnImport(unittest.TestCase):
-    def test_opencode_runtime_registered_for_anthropic(self):
-        """Importing director.opencode registers OpenCodeRuntime for 'anthropic'."""
-        entry = rt._REGISTRY.get("anthropic")
-        self.assertIsNotNone(entry, "'anthropic' missing from registry after oc import")
-        self.assertIsInstance(entry, oc.OpenCodeRuntime)
+    def test_opencode_provider_registered_for_opencode(self):
+        entry = rt._REGISTRY.get("opencode")
+        self.assertIsNotNone(entry, "'opencode' missing from registry after oc import")
+        self.assertIsInstance(entry, oc.OpenCodeProvider)
 
-    def test_opencode_runtime_registered_for_lmstudio(self):
-        entry = rt._REGISTRY.get("lmstudio")
-        self.assertIsNotNone(entry, "'lmstudio' missing from registry after oc import")
-        self.assertIsInstance(entry, oc.OpenCodeRuntime)
-
-    def test_opencode_runtime_registered_for_amazon_bedrock(self):
-        entry = rt._REGISTRY.get("amazon-bedrock")
-        self.assertIsNotNone(entry)
-        self.assertIsInstance(entry, oc.OpenCodeRuntime)
+    def test_opencode_subproviders_are_not_registry_keys(self):
+        for provider in ("anthropic", "lmstudio", "amazon-bedrock"):
+            with self.subTest(provider=provider):
+                self.assertIsNone(rt.resolve(provider))
 
     def test_claude_code_runtime_registered_after_oc_import(self):
         """Importing director.opencode triggers import director.claudecode."""
         entry = rt._REGISTRY.get("claude-code")
         self.assertIsNotNone(entry, "'claude-code' missing from registry after oc import")
-        self.assertIsInstance(entry, cc.ClaudeCodeRuntime)
+        self.assertIsInstance(entry, cc.ClaudeCodeProvider)
 
-    def test_resolve_lmstudio_returns_opencode_runtime(self):
-        entry = rt.resolve("lmstudio")
+    def test_resolve_opencode_returns_opencode_provider(self):
+        entry = rt.resolve("opencode")
         self.assertIsNotNone(entry)
-        self.assertIsInstance(entry, oc.OpenCodeRuntime)
+        self.assertIsInstance(entry, oc.OpenCodeProvider)
 
     def test_resolve_claude_code_returns_claudecode_runtime(self):
         entry = rt.resolve("claude-code")
         self.assertIsNotNone(entry)
-        self.assertIsInstance(entry, cc.ClaudeCodeRuntime)
+        self.assertIsInstance(entry, cc.ClaudeCodeProvider)
 
-    def test_runtime_for_model_resolves_lmstudio_model(self):
-        from director.opencode import runtime_for_model
+    def test_provider_for_model_resolves_opencode_model(self):
+        from director.opencode import provider_for_model
 
-        resolved = runtime_for_model("lmstudio/qwen3.6-27b")
+        resolved = provider_for_model("opencode/lmstudio/qwen3.6-27b")
         self.assertIsNotNone(resolved)
-        self.assertIsInstance(resolved, oc.OpenCodeRuntime)
+        self.assertIsInstance(resolved, oc.OpenCodeProvider)
 
-    def test_runtime_for_model_resolves_claude_code_model(self):
-        from director.opencode import runtime_for_model
+    def test_provider_for_model_resolves_claude_code_model(self):
+        from director.opencode import provider_for_model
 
-        resolved = runtime_for_model("claude-code/opus")
+        resolved = provider_for_model("claude-code/opus")
         self.assertIsNotNone(resolved)
-        self.assertIsInstance(resolved, cc.ClaudeCodeRuntime)
+        self.assertIsInstance(resolved, cc.ClaudeCodeProvider)
 
-    def test_resolve_and_runtime_for_model_agree_on_lmstudio(self):
-        from director.opencode import runtime_for_model
+    def test_resolve_and_provider_for_model_agree_on_opencode(self):
+        from director.opencode import provider_for_model
 
-        self.assertIs(rt.resolve("lmstudio"), runtime_for_model("lmstudio/qwen"))
+        self.assertIs(rt.resolve("opencode"), provider_for_model("opencode/lmstudio/qwen"))
 
     def test_resolve_unknown_returns_none(self):
         self.assertIsNone(rt.resolve("xyz-totally-unknown"))
 
 
 # --------------------------------------------------------------------------- #
-# 5. Dispatch routing
+# 4. Dispatch routing
 # --------------------------------------------------------------------------- #
 
 
@@ -360,19 +290,19 @@ class TestDispatchRouting(_DispatchMixin, unittest.TestCase):
         run_agent(**_kwargs(model="claude-code/a/b/c"))
         self.assertEqual(self.claude_calls[0]["model"], "a/b/c")
 
-    def test_anthropic_routes_to_opencode_full_model_unchanged(self):
-        run_agent(**_kwargs(model="anthropic/claude-opus-4-8"))
+    def test_opencode_anthropic_routes_to_opencode_model_stripped(self):
+        run_agent(**_kwargs(model="opencode/anthropic/claude-opus-4-8"))
         self.assertEqual(len(self.oc_calls), 1)
         self.assertEqual(len(self.claude_calls), 0)
         self.assertEqual(self.oc_calls[0]["model"], "anthropic/claude-opus-4-8")
 
-    def test_lmstudio_routes_to_opencode_full_model_unchanged(self):
-        run_agent(**_kwargs(model="lmstudio/qwen3.6-27b-mtp"))
+    def test_opencode_lmstudio_routes_to_opencode_model_stripped(self):
+        run_agent(**_kwargs(model="opencode/lmstudio/qwen3.6-27b-mtp"))
         self.assertEqual(len(self.oc_calls), 1)
         self.assertEqual(self.oc_calls[0]["model"], "lmstudio/qwen3.6-27b-mtp")
 
-    def test_amazon_bedrock_routes_to_opencode_full_model_unchanged(self):
-        run_agent(**_kwargs(model="amazon-bedrock/us.anthropic.claude-opus-4-7"))
+    def test_opencode_amazon_bedrock_routes_to_opencode_model_stripped(self):
+        run_agent(**_kwargs(model="opencode/amazon-bedrock/us.anthropic.claude-opus-4-7"))
         self.assertEqual(len(self.oc_calls), 1)
         self.assertEqual(len(self.claude_calls), 0)
         self.assertEqual(
@@ -380,13 +310,13 @@ class TestDispatchRouting(_DispatchMixin, unittest.TestCase):
             "amazon-bedrock/us.anthropic.claude-opus-4-7",
         )
 
-    def test_openrouter_routes_to_opencode_full_model_unchanged(self):
-        run_agent(**_kwargs(model="openrouter/anthropic/claude-opus-4-8"))
+    def test_opencode_openrouter_routes_to_opencode_model_stripped(self):
+        run_agent(**_kwargs(model="opencode/openrouter/anthropic/claude-opus-4-8"))
         self.assertEqual(len(self.oc_calls), 1)
         self.assertEqual(self.oc_calls[0]["model"], "openrouter/anthropic/claude-opus-4-8")
 
     def test_agent_forwarded_unchanged_to_opencode(self):
-        run_agent(**_kwargs(agent="brainstorm", model="lmstudio/model"))
+        run_agent(**_kwargs(agent="brainstorm", model="opencode/lmstudio/model"))
         self.assertEqual(self.oc_calls[0]["agent"], "brainstorm")
 
     def test_agent_forwarded_unchanged_to_claude(self):
@@ -411,7 +341,7 @@ class TestDispatchRouting(_DispatchMixin, unittest.TestCase):
     def test_kwargs_forwarded_to_opencode(self):
         run_agent(
             agent="executor",
-            model="lmstudio/model",
+            model="opencode/lmstudio/model",
             message="do it",
             cwd="/tmp/cwd",
             log_path="logs/e.json",
@@ -425,7 +355,7 @@ class TestDispatchRouting(_DispatchMixin, unittest.TestCase):
 
     def test_mixed_roles_route_independently_by_model(self):
         run_agent(**_kwargs(agent="planner", model="claude-code/opus"))
-        run_agent(**_kwargs(agent="executor", model="lmstudio/qwen3.6"))
+        run_agent(**_kwargs(agent="executor", model="opencode/lmstudio/qwen3.6"))
         run_agent(**_kwargs(agent="reviewer", model="claude-code/sonnet"))
         self.assertEqual(len(self.claude_calls), 2)
         self.assertEqual(len(self.oc_calls), 1)
@@ -434,7 +364,7 @@ class TestDispatchRouting(_DispatchMixin, unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# 6. Unknown provider → error RunResult, never raises
+# 5. Unknown provider → error RunResult, never raises
 # --------------------------------------------------------------------------- #
 
 
@@ -481,107 +411,104 @@ class TestUnknownProvider(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# 7. No-elif extensibility — register a dummy runtime, route to it
+# 6. No-elif extensibility — register a dummy provider, route to it
 # --------------------------------------------------------------------------- #
 
 
 class TestRegistryExtensibility(_RegistryGuard, unittest.TestCase):
-    def _make_capturing_runtime(self, name, provider, calls):
-        class _CaptureRuntime:
+    def _make_capturing_provider(self, name, calls):
+        class _CaptureProvider:
             pass
 
-        _CaptureRuntime.name = name
-        _CaptureRuntime.providers = frozenset([provider])
+        _CaptureProvider.name = name
 
         def run(self, *, agent, model, message, cwd, log_path, timeout):
             calls.append({"agent": agent, "model": model})
             return RunResult(returncode=0, text=f"from-{name}")
 
-        _CaptureRuntime.run = run
-        _CaptureRuntime.system_prompt_for = lambda self, agent: None
-        return _CaptureRuntime()
+        _CaptureProvider.run = run
+        _CaptureProvider.system_prompt_for = lambda self, agent: None
+        return _CaptureProvider()
 
     def test_register_dummy_then_route_to_it(self):
         calls = []
-        inst = self._make_capturing_runtime("dummy-rt", "dummy-provider", calls)
+        inst = self._make_capturing_provider("dummy-provider", calls)
         rt.register(inst)
 
         result = run_agent(**_kwargs(model="dummy-provider/some-model"))
 
-        self.assertEqual(len(calls), 1, "dummy runtime's run() was not called")
+        self.assertEqual(len(calls), 1, "dummy provider's run() was not called")
         self.assertEqual(calls[0]["model"], "dummy-provider/some-model")
-        self.assertEqual(result.text, "from-dummy-rt")
+        self.assertEqual(result.text, "from-dummy-provider")
 
     def test_dummy_run_receives_full_model_string_unchanged(self):
         calls = []
-        inst = self._make_capturing_runtime("passthru", "test-prov", calls)
+        inst = self._make_capturing_provider("test-prov", calls)
         rt.register(inst)
 
         run_agent(**_kwargs(model="test-prov/vendor/specific-model"))
         self.assertEqual(calls[0]["model"], "test-prov/vendor/specific-model")
 
-    def test_newly_registered_resolves_via_runtime_for_model(self):
-        from director.opencode import runtime_for_model
+    def test_newly_registered_resolves_via_provider_for_model(self):
+        from director.opencode import provider_for_model
 
         calls = []
-        inst = self._make_capturing_runtime("probe-rt", "probe-prov", calls)
+        inst = self._make_capturing_provider("probe-prov", calls)
         rt.register(inst)
 
-        resolved = runtime_for_model("probe-prov/x")
+        resolved = provider_for_model("probe-prov/x")
         self.assertIs(resolved, inst)
 
-    def test_existing_runtimes_unaffected_by_new_registration(self):
+    def test_existing_providers_unaffected_by_new_registration(self):
         calls = []
-        inst = self._make_capturing_runtime("extra-rt", "extra-prov", calls)
+        inst = self._make_capturing_provider("extra-prov", calls)
         rt.register(inst)
 
-        # lmstudio must still resolve to OpenCodeRuntime
-        existing = rt.resolve("lmstudio")
-        self.assertIsInstance(existing, oc.OpenCodeRuntime)
+        existing = rt.resolve("opencode")
+        self.assertIsInstance(existing, oc.OpenCodeProvider)
 
 
 # --------------------------------------------------------------------------- #
-# 8. Registration collision raises ValueError
+# 7. Registration collision raises ValueError
 # --------------------------------------------------------------------------- #
 
 
 class TestRegistryCollision(_RegistryGuard, unittest.TestCase):
-    def _make_rt(self, name, providers):
+    def _make_rt(self, name):
         class _R:
             pass
 
         _R.name = name
-        _R.providers = frozenset(providers)
         _R.run = lambda self, **kw: RunResult(returncode=0)
         _R.system_prompt_for = lambda self, agent: None
         return _R()
 
     def test_collision_raises_value_error(self):
-        rt.register(self._make_rt("alpha", ["col-prov"]))
+        rt.register(self._make_rt("col-prov"))
         with self.assertRaises(ValueError):
-            rt.register(self._make_rt("beta", ["col-prov"]))
+            rt.register(self._make_rt("col-prov"))
 
     def test_collision_error_names_the_colliding_provider(self):
-        rt.register(self._make_rt("first", ["shared-key"]))
+        rt.register(self._make_rt("shared-key"))
         with self.assertRaises(ValueError) as ctx:
-            rt.register(self._make_rt("second", ["shared-key"]))
+            rt.register(self._make_rt("shared-key"))
         self.assertIn("shared-key", str(ctx.exception))
 
     def test_collision_does_not_overwrite_original(self):
-        r1 = self._make_rt("original", ["my-prov"])
+        r1 = self._make_rt("my-prov")
         rt.register(r1)
         with contextlib.suppress(ValueError):
-            rt.register(self._make_rt("interloper", ["my-prov"]))
+            rt.register(self._make_rt("my-prov"))
         self.assertIs(rt._REGISTRY.get("my-prov"), r1)
 
     def test_collision_at_existing_opencode_provider_raises(self):
-        """Trying to register a new runtime for an already-owned provider raises."""
+        """Trying to register a new provider for an already-owned provider raises."""
         with self.assertRaises(ValueError):
-            rt.register(self._make_rt("duplicate", ["lmstudio"]))
+            rt.register(self._make_rt("opencode"))
 
 
 # --------------------------------------------------------------------------- #
-# 9. Monkeypatchability
+# 8. Monkeypatchability
 # --------------------------------------------------------------------------- #
 
 
@@ -603,7 +530,7 @@ class TestMonkeyPatchability(unittest.TestCase):
         self.assertIs(oc.run_agent, orig)
 
     def test_run_opencode_monkeypatch_honored_by_dispatch(self):
-        """OpenCodeRuntime.run() calls _run_opencode by bare name in oc module."""
+        """OpenCodeProvider.run() calls _run_opencode by bare name in oc module."""
         calls = []
         orig = oc._run_opencode
         try:
@@ -611,14 +538,14 @@ class TestMonkeyPatchability(unittest.TestCase):
                 calls.append(kw),
                 RunResult(returncode=0, text="oc-patched"),
             )[1]
-            result = run_agent(**_kwargs(model="lmstudio/some-model"))
+            result = run_agent(**_kwargs(model="opencode/lmstudio/some-model"))
             self.assertEqual(len(calls), 1)
             self.assertEqual(result.text, "oc-patched")
         finally:
             oc._run_opencode = orig
 
-    def test_run_opencode_patch_receives_full_model_string(self):
-        """OpenCodeRuntime does NOT strip the provider segment."""
+    def test_run_opencode_patch_receives_stripped_model_string(self):
+        """OpenCodeProvider strips the leading 'opencode/' segment."""
         received_model = []
         orig = oc._run_opencode
         try:
@@ -626,13 +553,13 @@ class TestMonkeyPatchability(unittest.TestCase):
                 received_model.append(kw["model"]),
                 RunResult(returncode=0),
             )[1]
-            run_agent(**_kwargs(model="openrouter/anthropic/model"))
+            run_agent(**_kwargs(model="opencode/openrouter/anthropic/model"))
         finally:
             oc._run_opencode = orig
         self.assertEqual(received_model, ["openrouter/anthropic/model"])
 
     def test_run_claude_monkeypatch_honored_by_dispatch(self):
-        """ClaudeCodeRuntime.run() calls run_claude by bare name in cc module."""
+        """ClaudeCodeProvider.run() calls run_claude by bare name in cc module."""
         calls = []
         orig = cc.run_claude
         try:
@@ -647,7 +574,7 @@ class TestMonkeyPatchability(unittest.TestCase):
             cc.run_claude = orig
 
     def test_run_claude_patch_receives_stripped_model(self):
-        """ClaudeCodeRuntime strips the leading 'claude-code/' segment."""
+        """ClaudeCodeProvider strips the leading 'claude-code/' segment."""
         received_model = []
         orig = cc.run_claude
         try:

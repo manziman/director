@@ -1,16 +1,17 @@
-"""Acceptance tests for ClaudeCodeRuntime adapter in director.claudecode.
+"""Acceptance tests for ClaudeCodeProvider adapter in director.claudecode.
 
 Tests cover:
 1. Import redirect (AST): no 'from director.opencode import' remains in claudecode.py
-2. ClaudeCodeRuntime class: attributes, Runtime protocol conformance
+2. ClaudeCodeProvider class: attributes, Provider protocol conformance
 3. Model stripping: only the first path segment is removed from the model string
 4. Module-global delegation: monkeypatching cc.run_claude / cc.system_prompt_for is honored
-5. Registration: importing director.claudecode registers ClaudeCodeRuntime in director.runtime
+5. Registration: importing director.claudecode registers ClaudeCodeProvider in director.provider
 
 Run: python3 -m unittest discover -s tests -p test_claudecode_runtime.py -q
 """
 
 import ast
+import importlib
 import inspect
 import pathlib
 import sys
@@ -21,10 +22,10 @@ from pathlib import Path
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 # RunResult is needed only for constructing monkeypatch return values.
-# Use director.runtime if it exists (after the runtime node is implemented),
+# Use director.provider if it exists (after the provider node is implemented),
 # fall back to director.opencode (which always exists) otherwise.
 try:
-    from director.runtime import RunResult as _RunResult
+    from director.provider import RunResult as _RunResult
 except ImportError:
     from director.opencode import RunResult as _RunResult
 
@@ -33,16 +34,26 @@ import director.claudecode as cc
 _CLAUDECODE_SRC = pathlib.Path(__file__).resolve().parent.parent / "director" / "claudecode.py"
 
 
+def setUpModule():
+    """Refresh Claude Code adapter after provider registry isolation tests reload provider."""
+    global _RunResult
+    import director.provider as provider
+
+    importlib.reload(provider)
+    importlib.reload(cc)
+    _RunResult = provider.RunResult
+
+
 # --------------------------------------------------------------------------- #
 # helpers
 # --------------------------------------------------------------------------- #
 
 
 def _make_result(**kwargs):
-    """Build a RunResult that works with both director.opencode and director.runtime.
+    """Build a RunResult that works with both director.opencode and director.provider.
 
     director.opencode.RunResult requires text/tokens/cost_reported/n_steps as
-    positional fields; director.runtime.RunResult gives them safe defaults. We
+    positional fields; director.provider.RunResult gives them safe defaults. We
     always supply them so the helper is forward- and backward-compatible.
     """
     base = {"returncode": 0, "text": "", "tokens": {}, "cost_reported": 0.0, "n_steps": 0}
@@ -111,54 +122,48 @@ class TestImportRedirect(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# 2. ClaudeCodeRuntime class — existence and attributes
+# 2. ClaudeCodeProvider class — existence and attributes
 # --------------------------------------------------------------------------- #
 
 
-class TestClaudeCodeRuntimeAttributes(unittest.TestCase):
+class TestClaudeCodeProviderAttributes(unittest.TestCase):
     def test_class_exported_from_claudecode(self):
         self.assertTrue(
-            hasattr(cc, "ClaudeCodeRuntime"),
-            "director.claudecode has no attribute 'ClaudeCodeRuntime'",
+            hasattr(cc, "ClaudeCodeProvider"),
+            "director.claudecode has no attribute 'ClaudeCodeProvider'",
         )
 
     def test_name_is_claude_code(self):
-        self.assertEqual(cc.ClaudeCodeRuntime.name, "claude-code")
+        self.assertEqual(cc.ClaudeCodeProvider.name, "claude-code")
 
-    def test_providers_is_frozenset(self):
-        self.assertIsInstance(cc.ClaudeCodeRuntime.providers, frozenset)
-
-    def test_providers_equals_expected_frozenset(self):
-        self.assertEqual(cc.ClaudeCodeRuntime.providers, frozenset({"claude-code"}))
-
-    def test_providers_contains_claude_code(self):
-        self.assertIn("claude-code", cc.ClaudeCodeRuntime.providers)
+    def test_provider_declares_name_only(self):
+        self.assertFalse(hasattr(cc.ClaudeCodeProvider, "providers"))
 
     def test_has_callable_run_method(self):
         self.assertTrue(
-            callable(getattr(cc.ClaudeCodeRuntime, "run", None)),
-            "ClaudeCodeRuntime.run is not callable",
+            callable(getattr(cc.ClaudeCodeProvider, "run", None)),
+            "ClaudeCodeProvider.run is not callable",
         )
 
     def test_has_callable_system_prompt_for_method(self):
         self.assertTrue(
-            callable(getattr(cc.ClaudeCodeRuntime, "system_prompt_for", None)),
-            "ClaudeCodeRuntime.system_prompt_for is not callable",
+            callable(getattr(cc.ClaudeCodeProvider, "system_prompt_for", None)),
+            "ClaudeCodeProvider.system_prompt_for is not callable",
         )
 
     def test_run_has_all_required_kwargs(self):
-        sig = inspect.signature(cc.ClaudeCodeRuntime.run)
+        sig = inspect.signature(cc.ClaudeCodeProvider.run)
         params = set(sig.parameters.keys()) - {"self"}
         for kw in ("agent", "model", "message", "cwd", "log_path", "timeout"):
-            self.assertIn(kw, params, f"ClaudeCodeRuntime.run missing kwarg: {kw!r}")
+            self.assertIn(kw, params, f"ClaudeCodeProvider.run missing kwarg: {kw!r}")
 
     def test_system_prompt_for_has_agent_param(self):
-        sig = inspect.signature(cc.ClaudeCodeRuntime.system_prompt_for)
+        sig = inspect.signature(cc.ClaudeCodeProvider.system_prompt_for)
         self.assertIn("agent", sig.parameters)
 
     def test_instantiable_with_no_args(self):
-        # ClaudeCodeRuntime() must not require constructor arguments
-        rt = cc.ClaudeCodeRuntime()
+        # ClaudeCodeProvider() must not require constructor arguments
+        rt = cc.ClaudeCodeProvider()
         self.assertIsNotNone(rt)
 
 
@@ -168,16 +173,16 @@ class TestClaudeCodeRuntimeAttributes(unittest.TestCase):
 
 
 class TestModelStripping(unittest.TestCase):
-    """ClaudeCodeRuntime.run() strips the first '/'-delimited segment of model."""
+    """ClaudeCodeProvider.run() strips the first '/'-delimited segment of model."""
 
     def _captured_model(self, model_str):
-        """Call ClaudeCodeRuntime.run() with a fake run_claude; return captured model."""
+        """Call ClaudeCodeProvider.run() with a fake run_claude; return captured model."""
         cap = {}
         orig = cc.run_claude
         cc.run_claude = _make_fake_run_claude(cap)
         try:
             with tempfile.TemporaryDirectory() as d:
-                cc.ClaudeCodeRuntime().run(
+                cc.ClaudeCodeProvider().run(
                     agent="planner",
                     model=model_str,
                     message="test",
@@ -218,7 +223,7 @@ class TestModelStripping(unittest.TestCase):
 
 
 class TestModuleGlobalDelegation(unittest.TestCase):
-    """ClaudeCodeRuntime must reference run_claude and system_prompt_for by
+    """ClaudeCodeProvider must reference run_claude and system_prompt_for by
     bare module-global name so that test-time monkeypatching is honored."""
 
     def test_run_calls_monkeypatched_run_claude(self):
@@ -227,7 +232,7 @@ class TestModuleGlobalDelegation(unittest.TestCase):
         cc.run_claude = _make_fake_run_claude(cap)
         try:
             with tempfile.TemporaryDirectory() as d:
-                cc.ClaudeCodeRuntime().run(
+                cc.ClaudeCodeProvider().run(
                     agent="executor",
                     model="claude-code/sonnet",
                     message="hello world",
@@ -255,7 +260,7 @@ class TestModuleGlobalDelegation(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as d:
                 lp = Path(d) / "out.json"
-                cc.ClaudeCodeRuntime().run(
+                cc.ClaudeCodeProvider().run(
                     agent="planner",
                     model="claude-code/opus",
                     message="m",
@@ -275,7 +280,7 @@ class TestModuleGlobalDelegation(unittest.TestCase):
         cc.run_claude = lambda **kw: sentinel  # noqa: E731
         try:
             with tempfile.TemporaryDirectory() as d:
-                result = cc.ClaudeCodeRuntime().run(
+                result = cc.ClaudeCodeProvider().run(
                     agent="planner",
                     model="claude-code/opus",
                     message="test",
@@ -292,7 +297,7 @@ class TestModuleGlobalDelegation(unittest.TestCase):
         orig = cc.system_prompt_for
         cc.system_prompt_for = lambda agent: f"PATCHED:{agent}"
         try:
-            result = cc.ClaudeCodeRuntime().system_prompt_for("planner")
+            result = cc.ClaudeCodeProvider().system_prompt_for("planner")
         finally:
             cc.system_prompt_for = orig
 
@@ -303,7 +308,7 @@ class TestModuleGlobalDelegation(unittest.TestCase):
         orig = cc.system_prompt_for
         cc.system_prompt_for = lambda agent: cap.update(agent=agent) or "body"
         try:
-            cc.ClaudeCodeRuntime().system_prompt_for("executor")
+            cc.ClaudeCodeProvider().system_prompt_for("executor")
         finally:
             cc.system_prompt_for = orig
 
@@ -313,7 +318,7 @@ class TestModuleGlobalDelegation(unittest.TestCase):
         orig = cc.system_prompt_for
         cc.system_prompt_for = lambda agent: None
         try:
-            result = cc.ClaudeCodeRuntime().system_prompt_for("whatever")
+            result = cc.ClaudeCodeProvider().system_prompt_for("whatever")
         finally:
             cc.system_prompt_for = orig
 
@@ -326,46 +331,46 @@ class TestModuleGlobalDelegation(unittest.TestCase):
 
 
 class TestRegistration(unittest.TestCase):
-    """Importing director.claudecode must register ClaudeCodeRuntime in
-    director.runtime._REGISTRY under the 'claude-code' provider key."""
+    """Importing director.claudecode must register ClaudeCodeProvider in
+    director.provider._REGISTRY under the 'claude-code' provider key."""
 
-    def _get_runtime_module(self):
+    def _get_provider_module(self):
         try:
-            import director.runtime as rt
+            import director.provider as rt
 
             return rt
         except ImportError:
             self.skipTest(
-                "director.runtime not yet implemented; "
-                "registration tests deferred until the runtime node is complete"
+                "director.provider not yet implemented; "
+                "registration tests deferred until the provider node is complete"
             )
 
     def test_registry_contains_claude_code_key_after_import(self):
-        rt = self._get_runtime_module()
+        rt = self._get_provider_module()
         # The module-level import of director.claudecode (at top of this file)
-        # should have triggered register(ClaudeCodeRuntime()) already.
+        # should have triggered register(ClaudeCodeProvider()) already.
         import director.claudecode  # noqa: F401 — ensures side-effect ran
 
         self.assertIn(
             "claude-code",
             rt._REGISTRY,
-            "director.runtime._REGISTRY lacks 'claude-code' after importing director.claudecode",
+            "director.provider._REGISTRY lacks 'claude-code' after importing director.claudecode",
         )
 
     def test_registered_value_is_claudecodert_instance(self):
-        rt = self._get_runtime_module()
+        rt = self._get_provider_module()
         import director.claudecode as _cc  # noqa: F401
 
         entry = rt._REGISTRY.get("claude-code")
         self.assertIsNotNone(entry)
         self.assertIsInstance(
             entry,
-            _cc.ClaudeCodeRuntime,
-            f"_REGISTRY['claude-code'] is {type(entry)!r}, expected ClaudeCodeRuntime",
+            _cc.ClaudeCodeProvider,
+            f"_REGISTRY['claude-code'] is {type(entry)!r}, expected ClaudeCodeProvider",
         )
 
-    def test_registered_runtime_name_matches(self):
-        rt = self._get_runtime_module()
+    def test_registered_provider_name_matches(self):
+        rt = self._get_provider_module()
         import director.claudecode  # noqa: F401
 
         entry = rt._REGISTRY.get("claude-code")

@@ -7,7 +7,7 @@ run on both Linux and Windows:
   - ``strategy.fail-fast: false`` is kept.
   - The existing ``python-version`` matrix is unchanged.
   - The job's ``runs-on`` becomes ``${{ matrix.os }}``.
-  - A comment near the matrix documents that the suite stubs the external runtime
+  - A comment near the matrix documents that the suite stubs the external provider
     boundary and drives real temp git repos, and that ``windows-latest`` ships
     git + Git Bash ``sh`` (satisfying the shell-preference path).
   - Every ``run:`` step in the `test` job is cross-platform: it either avoids

@@ -5,6 +5,16 @@
 
 ### Features
 
+- Breaking: unify provider routing around the tool director drives (#22).
+
+  Tier strings now use `"<provider>/<model-ref>"`, where the first segment is
+  the tool (`opencode` or `claude-code`). OpenCode-backed tiers must be migrated
+  from bare sub-provider prefixes such as `lmstudio/...`, `anthropic/...`, and
+  `amazon-bedrock/...` to `opencode/lmstudio/...`, `opencode/anthropic/...`, and
+  `opencode/amazon-bedrock/...`. This is a hard break with no shim: legacy tiers
+  fail at config load with a migration hint. Hand-edit `~/.director/config.toml`
+  and any repo `.director/config.toml` or profile files on upgrade.
+
 - User-level director config overridable by repo-local config (#7)
   ([#21](https://github.com/manziman/director/pull/21),
   [`afd0f57`](https://github.com/manziman/director/commit/afd0f572183800227215f0d8b1f07f5ca58fd3a2))

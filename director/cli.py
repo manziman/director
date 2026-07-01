@@ -75,7 +75,7 @@ def cmd_bench(args) -> int:
 def cmd_sync_agents(args) -> int:
     written = sync_agents(args.repo)
     if not written:
-        print("No runtime-specific agent files needed (no OpenCode provider configured).")
+        print("No provider-specific agent files needed (no OpenCode provider configured).")
     else:
         print("Synced:\n  " + "\n  ".join(written))
     return 0

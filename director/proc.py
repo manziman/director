@@ -14,7 +14,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from director.runtime import _CLEAN_ENV
+from director.provider import _CLEAN_ENV
 
 # --------------------------------------------------------------------------- #
 # ShellOutcome

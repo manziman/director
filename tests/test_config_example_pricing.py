@@ -20,6 +20,12 @@ _CLAUDE_CODE_MODELS = [
     "claude-code/haiku",
 ]
 
+_OPENCODE_MODELS = [
+    "opencode/lmstudio/qwen3.6-27b-mtp",
+    "opencode/amazon-bedrock/us.anthropic.claude-opus-4-7",
+    "opencode/amazon-bedrock/anthropic.claude-sonnet-4-6",
+]
+
 
 def _load():
     with open(_EXAMPLE, "rb") as f:
@@ -100,6 +106,27 @@ class ClaudeCodePricingTablesExistTests(unittest.TestCase):
                         0,
                         f"pricing['{key}'].{field} should be a positive illustrative number",
                     )
+
+
+class OpenCodePricingTablesUseProviderPrefixTests(unittest.TestCase):
+    """OpenCode pricing keys must be full opencode/* tier strings."""
+
+    def setUp(self):
+        self.pricing = _load().get("pricing", {})
+
+    def test_opencode_pricing_keys_exist(self):
+        for key in _OPENCODE_MODELS:
+            with self.subTest(key=key):
+                self.assertIn(key, self.pricing)
+
+    def test_legacy_bare_opencode_keys_absent(self):
+        for key in (
+            "lmstudio/qwen3.6-27b-mtp",
+            "amazon-bedrock/us.anthropic.claude-opus-4-7",
+            "amazon-bedrock/anthropic.claude-sonnet-4-6",
+        ):
+            with self.subTest(key=key):
+                self.assertNotIn(key, self.pricing)
 
 
 class UnlistedModelsPricedAtZeroDocumentedTests(unittest.TestCase):

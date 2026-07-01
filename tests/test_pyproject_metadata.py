@@ -1,7 +1,7 @@
 """Acceptance tests for pyproject.toml metadata neutralization.
 
 Asserts that pyproject.toml presents OpenCode and Claude Code as peer
-runtimes rather than framing OpenCode as the sole runtime.
+providers rather than framing OpenCode as the sole provider.
 """
 
 import pathlib
@@ -26,7 +26,7 @@ class TestDescriptionNeutrality(unittest.TestCase):
         self.assertNotIn(
             "a thin orchestrator over OpenCode",
             desc,
-            msg=f"Description still frames OpenCode as the sole runtime: {desc!r}",
+            msg=f"Description still frames OpenCode as the sole provider: {desc!r}",
         )
 
     def test_description_mentions_claude_code(self):
@@ -35,7 +35,7 @@ class TestDescriptionNeutrality(unittest.TestCase):
         self.assertIn(
             "Claude Code",
             desc,
-            msg=(f"Description does not mention Claude Code as a peer runtime: {desc!r}"),
+            msg=(f"Description does not mention Claude Code as a peer provider: {desc!r}"),
         )
 
 
@@ -49,7 +49,7 @@ class TestKeywordPeerRule(unittest.TestCase):
                 keywords,
                 msg=(
                     f"'opencode' is in keywords but 'claude-code' is absent; "
-                    f"runtimes must be represented as peers. keywords={keywords!r}"
+                    f"providers must be represented as peers. keywords={keywords!r}"
                 ),
             )
 

@@ -1,7 +1,7 @@
-"""Acceptance tests for OpenCodeRuntime.discover_models.
+"""Acceptance tests for OpenCodeProvider.discover_models.
 
 Covers:
-  - Method existence and correct signature on OpenCodeRuntime
+  - Method existence and correct signature on OpenCodeProvider
   - Happy path: provider/model lines are extracted and returned in order
   - Filtering: empty lines and lines without '/' are dropped
   - Order: output order is preserved
@@ -15,6 +15,7 @@ Run: python3 -m unittest tests.test_opencode -v
 
 import ast
 import contextlib
+import importlib
 import inspect
 import pathlib
 import subprocess
@@ -28,6 +29,17 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import director.opencode as oc
 
 _OPENCODE_SRC = pathlib.Path(__file__).resolve().parent.parent / "director" / "opencode.py"
+
+
+def setUpModule():
+    """Refresh OpenCode adapter after provider registry isolation tests reload provider."""
+    import director.claudecode as cc
+    import director.provider as provider
+
+    importlib.reload(provider)
+    importlib.reload(cc)
+    importlib.reload(oc)
+
 
 # --------------------------------------------------------------------------- #
 # helpers
@@ -43,7 +55,7 @@ def _fake_run(stdout: str):
 
 
 def _runtime():
-    return oc.OpenCodeRuntime()
+    return oc.OpenCodeProvider()
 
 
 # --------------------------------------------------------------------------- #
@@ -54,18 +66,18 @@ def _runtime():
 class TestDiscoverModelsExists(unittest.TestCase):
     def test_opencode_runtime_has_discover_models(self):
         self.assertTrue(
-            hasattr(oc.OpenCodeRuntime, "discover_models"),
-            "OpenCodeRuntime must have a discover_models attribute",
+            hasattr(oc.OpenCodeProvider, "discover_models"),
+            "OpenCodeProvider must have a discover_models attribute",
         )
 
     def test_discover_models_is_callable(self):
         self.assertTrue(
-            callable(getattr(oc.OpenCodeRuntime, "discover_models", None)),
-            "OpenCodeRuntime.discover_models must be callable",
+            callable(getattr(oc.OpenCodeProvider, "discover_models", None)),
+            "OpenCodeProvider.discover_models must be callable",
         )
 
     def test_discover_models_takes_only_self(self):
-        sig = inspect.signature(oc.OpenCodeRuntime.discover_models)
+        sig = inspect.signature(oc.OpenCodeProvider.discover_models)
         params = list(sig.parameters.keys())
         self.assertEqual(
             params,
@@ -105,7 +117,7 @@ class TestDiscoverModelsHappyPath(unittest.TestCase):
         stdout = "anthropic/claude-sonnet-4-6\n"
         with patch("director.opencode.subprocess.run", return_value=_fake_run(stdout)):
             result = _runtime().discover_models()
-        self.assertEqual(result, ["anthropic/claude-sonnet-4-6"])
+        self.assertEqual(result, ["opencode/anthropic/claude-sonnet-4-6"])
 
     def test_multiple_model_lines_returned(self):
         stdout = "anthropic/claude-opus-4-8\nopenai/gpt-4o\nGoogle/gemini-2.5-pro\n"
@@ -113,7 +125,11 @@ class TestDiscoverModelsHappyPath(unittest.TestCase):
             result = _runtime().discover_models()
         self.assertEqual(
             result,
-            ["anthropic/claude-opus-4-8", "openai/gpt-4o", "Google/gemini-2.5-pro"],
+            [
+                "opencode/anthropic/claude-opus-4-8",
+                "opencode/openai/gpt-4o",
+                "opencode/Google/gemini-2.5-pro",
+            ],
         )
 
     def test_order_is_preserved(self):
@@ -121,14 +137,14 @@ class TestDiscoverModelsHappyPath(unittest.TestCase):
         stdout = "\n".join(models) + "\n"
         with patch("director.opencode.subprocess.run", return_value=_fake_run(stdout)):
             result = _runtime().discover_models()
-        self.assertEqual(result, models)
+        self.assertEqual(result, [f"opencode/{model}" for model in models])
 
     def test_deeply_nested_model_id_kept(self):
         # e.g. "google-vertex/us-central1/gemini-2.0-flash"
         stdout = "google-vertex/us-central1/gemini-2.0-flash\n"
         with patch("director.opencode.subprocess.run", return_value=_fake_run(stdout)):
             result = _runtime().discover_models()
-        self.assertEqual(result, ["google-vertex/us-central1/gemini-2.0-flash"])
+        self.assertEqual(result, ["opencode/google-vertex/us-central1/gemini-2.0-flash"])
 
 
 # --------------------------------------------------------------------------- #
@@ -141,7 +157,7 @@ class TestDiscoverModelsFiltering(unittest.TestCase):
         stdout = "\nanthropic/claude-opus-4-8\n\n\nopenai/gpt-4o\n\n"
         with patch("director.opencode.subprocess.run", return_value=_fake_run(stdout)):
             result = _runtime().discover_models()
-        self.assertEqual(result, ["anthropic/claude-opus-4-8", "openai/gpt-4o"])
+        self.assertEqual(result, ["opencode/anthropic/claude-opus-4-8", "opencode/openai/gpt-4o"])
 
     def test_lines_without_slash_dropped(self):
         stdout = "Available models:\nanthropic/claude-sonnet-4-6\nsome-bare-token\nopenai/gpt-4o\n"
@@ -149,14 +165,14 @@ class TestDiscoverModelsFiltering(unittest.TestCase):
             result = _runtime().discover_models()
         self.assertNotIn("Available models:", result)
         self.assertNotIn("some-bare-token", result)
-        self.assertIn("anthropic/claude-sonnet-4-6", result)
-        self.assertIn("openai/gpt-4o", result)
+        self.assertIn("opencode/anthropic/claude-sonnet-4-6", result)
+        self.assertIn("opencode/openai/gpt-4o", result)
 
     def test_whitespace_only_lines_dropped(self):
         stdout = "anthropic/claude-opus-4-8\n   \n\t\nopenai/gpt-4o\n"
         with patch("director.opencode.subprocess.run", return_value=_fake_run(stdout)):
             result = _runtime().discover_models()
-        self.assertEqual(result, ["anthropic/claude-opus-4-8", "openai/gpt-4o"])
+        self.assertEqual(result, ["opencode/anthropic/claude-opus-4-8", "opencode/openai/gpt-4o"])
 
     def test_lines_are_stripped(self):
         stdout = "  anthropic/claude-opus-4-8  \n  openai/gpt-4o  \n"
@@ -181,7 +197,7 @@ class TestDiscoverModelsFiltering(unittest.TestCase):
         stdout = "Loaded providers\nanthropic/claude-opus-4-8\n\nopenai/gpt-4o\nLoading complete\n"
         with patch("director.opencode.subprocess.run", return_value=_fake_run(stdout)):
             result = _runtime().discover_models()
-        self.assertEqual(result, ["anthropic/claude-opus-4-8", "openai/gpt-4o"])
+        self.assertEqual(result, ["opencode/anthropic/claude-opus-4-8", "opencode/openai/gpt-4o"])
 
 
 # --------------------------------------------------------------------------- #
@@ -281,14 +297,13 @@ class TestExistingInterfaceUnchanged(unittest.TestCase):
     def test_run_agent_still_importable(self):
         self.assertTrue(callable(getattr(oc, "run_agent", None)))
 
-    def test_runtime_for_model_still_importable(self):
-        from director.runtime import runtime_for_model
+    def test_provider_for_model_still_importable(self):
+        from director.provider import provider_for_model
 
-        self.assertTrue(callable(runtime_for_model))
+        self.assertTrue(callable(provider_for_model))
 
-    def test_opencode_providers_still_present(self):
-        self.assertIsInstance(oc.OPENCODE_PROVIDERS, frozenset)
-        self.assertIn("anthropic", oc.OPENCODE_PROVIDERS)
+    def test_opencode_providers_allowlist_removed(self):
+        self.assertFalse(hasattr(oc, "OPENCODE_PROVIDERS"))
 
     def test_run_result_still_importable(self):
         from director.opencode import RunResult
@@ -301,10 +316,10 @@ class TestExistingInterfaceUnchanged(unittest.TestCase):
         self.assertTrue(callable(watch_it_fail))
 
     def test_opencode_runtime_run_method_still_present(self):
-        self.assertTrue(callable(getattr(oc.OpenCodeRuntime, "run", None)))
+        self.assertTrue(callable(getattr(oc.OpenCodeProvider, "run", None)))
 
     def test_opencode_runtime_system_prompt_for_still_present(self):
-        self.assertTrue(callable(getattr(oc.OpenCodeRuntime, "system_prompt_for", None)))
+        self.assertTrue(callable(getattr(oc.OpenCodeProvider, "system_prompt_for", None)))
 
 
 # --------------------------------------------------------------------------- #

@@ -1,6 +1,6 @@
 # `director` — the orchestrator (Phase 2 + 2.5 + 3)
 
-A thin CLI that drives agent runtimes ([OpenCode](https://opencode.ai), Claude Code, …) to execute the decomposition harness.
+A thin CLI that drives agent providers ([OpenCode](https://opencode.ai), Claude Code, …) to execute the decomposition harness.
 Stdlib-only (Python ≥ 3.11). The harness consumes configured OpenAI-compatible
 endpoints; it never manages providers.
 
@@ -13,7 +13,7 @@ director run [--repo .] [--parallel N] [--max-attempts K]
 director status [--repo .]
 director bench "<task>" --profiles all-frontier,cheap-cloud,local-first [--plan-profile P]
 director init [--repo .]                      # interactively create .director/config.toml (per-role models + gate commands)
-director sync-agents [--repo .]               # (re)install role agents into <repo>/.opencode (+ gitignore, starter opencode.json) — only for OpenCode provider tiers
+director sync-agents [--repo .]               # (re)install role agents into <repo>/.opencode (+ gitignore, starter opencode.json) — only for opencode tiers
 ```
 
 ## Flow
@@ -89,13 +89,16 @@ Per-profile metrics streams and a `summary.json` land in `.director/bench/`.
 
 ## Roles → tiers
 
-Roles bind to `provider/model` strings in `.director/config.toml` (`[tiers]`).
-Code/logs name only roles. `director` passes the resolved model via `opencode run
---agent <role> --model <tier>`, so **switching executor models is a config edit,
-never a code change.** `director init` interactively creates `.director/config.toml`,
-asking which model to use per role and what your gate commands are; `sync-agents` only
-installs the role agents (plus a gitignore and a starter `opencode.json`) and no longer
-writes the config. See the bundled `config.example.toml` for the full/advanced schema.
+Roles bind to `provider/model-ref` strings in `.director/config.toml` (`[tiers]`).
+The provider is the tool director drives (`opencode` or `claude-code`); the
+remaining model ref is passed to that tool (`opencode/lmstudio/qwen` becomes
+`opencode run --model lmstudio/qwen`, while `claude-code/opus` becomes
+`claude --model opus`). Code/logs name only roles, so **switching executor models is
+a config edit, never a code change.** `director init` interactively creates
+`.director/config.toml`, asking which model to use per role and what your gate
+commands are; `sync-agents` only installs the role agents (plus a gitignore and a
+starter `opencode.json`) and no longer writes the config. See the bundled
+`config.example.toml` for the full/advanced schema.
 For `bench`, create
 `.director/profiles/<name>.toml` variants (copy `config.toml`, change the executor tier).
 

@@ -25,13 +25,13 @@ from director.setup import AGENT_FILES
 
 # Build TOML content using the actual ROLES so the files satisfy config.load_file.
 _OPENCODE_TOML = (
-    "[tiers]\n" + "\n".join(f'{r} = "anthropic/claude-3-5-sonnet"' for r in ROLES) + "\n"
+    "[tiers]\n" + "\n".join(f'{r} = "opencode/anthropic/claude-3-5-sonnet"' for r in ROLES) + "\n"
 )
 
 _CLAUDECODE_TOML = "[tiers]\n" + "\n".join(f'{r} = "claude-code/sonnet"' for r in ROLES) + "\n"
 
 # A TOML that is missing most required roles — load_file raises ValueError.
-_INCOMPLETE_TOML = '[tiers]\nplanner = "anthropic/claude-3-5-sonnet"\n'
+_INCOMPLETE_TOML = '[tiers]\nplanner = "opencode/anthropic/claude-3-5-sonnet"\n'
 
 # A TOML that is syntactically invalid.
 _MALFORMED_TOML = "this is not TOML }{\n"
@@ -51,7 +51,7 @@ def _cfg(tiers: dict) -> Config:
 
 
 def _opencode_cfg() -> Config:
-    return _cfg(dict.fromkeys(ROLES, "anthropic/claude-3-5-sonnet"))
+    return _cfg(dict.fromkeys(ROLES, "opencode/anthropic/claude-3-5-sonnet"))
 
 
 def _claudecode_cfg() -> Config:
@@ -240,7 +240,7 @@ class MixedTiersTests(unittest.TestCase):
     def test_mixed_providers_triggers_sync(self):
         roles = list(ROLES)
         tiers = {
-            r: ("anthropic/claude-3-5-sonnet" if i % 2 == 0 else "claude-code/sonnet")
+            r: ("opencode/anthropic/claude-3-5-sonnet" if i % 2 == 0 else "claude-code/sonnet")
             for i, r in enumerate(roles)
         }
         written = setup.sync_agents(self.tmp, _cfg(tiers))

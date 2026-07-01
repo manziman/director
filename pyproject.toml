@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "director-cli"
 dynamic = ["version"]
-description = "Model-agnostic decomposition coding harness that orchestrates agent runtimes (OpenCode, Claude Code) behind deterministic gates."
+description = "Model-agnostic decomposition coding harness that orchestrates agent providers (OpenCode, Claude Code) behind deterministic gates."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"

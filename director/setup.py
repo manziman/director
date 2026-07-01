@@ -1,9 +1,9 @@
 """Install Director's OpenCode agent definitions into a target repo.
 
-Renders role agent prompts into .opencode/agents/ ONLY when an OpenCode-owned
-provider is configured (in the passed Config or on-disk configuration). With no
-config, a claude-code-only config, or a malformed config, only .director/.gitignore
-is written and nothing under .opencode/ is created. Provider auth remains the
+Renders role agent prompts into .opencode/agents/ ONLY when the OpenCode provider
+is configured (in the passed Config or on-disk configuration). With no config, a
+claude-code-only config, or a malformed config, only .director/.gitignore is
+written and nothing under .opencode/ is created. Provider auth remains the
 operator's responsibility in the user's global OpenCode config.
 """
 
@@ -14,7 +14,6 @@ from pathlib import Path
 
 from director import config
 from director.config import Config
-from director.opencode import OPENCODE_PROVIDERS
 
 AGENT_FILES = (
     "brainstorm.md",
@@ -25,14 +24,14 @@ AGENT_FILES = (
     "reviewer.md",
 )
 
-# Runtime artifacts director writes into <repo>/.director/. These must never be
+# Generated artifacts director writes into <repo>/.director/. These must never be
 # committed: director's own commits use `git add -A` (to capture whatever the
 # executor created in the allowlist), which in a repo without this ignore file
 # would sweep these throwaway files into the job branch — then a later run that
 # rewrites them leaves a dirty TRACKED file, which makes `git checkout` refuse
 # (this bit `director bench` live). config.toml + profiles/ stay tracked.
 _DIRECTOR_GITIGNORE = """\
-# director runtime artifacts (generated per run). config.toml + profiles/ stay tracked.
+# director generated artifacts. config.toml + profiles/ stay tracked.
 state.json
 plan.json
 plan_stage.json
@@ -47,7 +46,7 @@ worktrees/
 
 
 def _opencode_selected(tiers: dict[str, str]) -> bool:
-    return any(tier.split("/", 1)[0] in OPENCODE_PROVIDERS for tier in tiers.values())
+    return any(tier.split("/", 1)[0] == "opencode" for tier in tiers.values())
 
 
 def _template(name: str) -> str:
@@ -56,7 +55,7 @@ def _template(name: str) -> str:
 
 def ensure_director_gitignore(repo: str | Path) -> None:
     """Seed <repo>/.director/.gitignore so director's `git add -A` commits never
-    sweep its own runtime files into the repo. Idempotent; safe to call on every
+    sweep its own generated files into the repo. Idempotent; safe to call on every
     plan/run. (Does not retroactively untrack files already committed in a repo
     that ran director before this existed — for those, `git rm --cached` once.)"""
     fdir = Path(repo) / ".director"
@@ -68,8 +67,8 @@ def ensure_director_gitignore(repo: str | Path) -> None:
 
 
 def sync_agents(repo: str | Path, cfg: Config | None = None) -> list[str]:
-    """Render agent templates into <repo>/.opencode/agents/ when an OpenCode-owned
-    provider is configured. Returns the list of repo-relative paths written."""
+    """Render agent templates into <repo>/.opencode/agents/ when OpenCode is
+    configured. Returns the list of repo-relative paths written."""
     repo = Path(repo)
     ensure_director_gitignore(repo)
 

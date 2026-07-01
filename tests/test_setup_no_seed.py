@@ -32,7 +32,7 @@ def _opencode_cfg() -> Config:
     """Construct a minimal Config with all roles bound to an OpenCode-owned provider."""
     return Config(
         path=Path("/dev/null"),
-        tiers=dict.fromkeys(ROLES, "anthropic/claude-3-5-sonnet"),
+        tiers=dict.fromkeys(ROLES, "opencode/anthropic/claude-3-5-sonnet"),
         gates={},
         pricing={},
         limits={},

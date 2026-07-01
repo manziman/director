@@ -174,7 +174,7 @@ class ResolveInitTargetTests(_HomeIsolatedTestCase):
 class RunInitTargetTests(_HomeIsolatedTestCase):
     def _run(self, *, models=None, answers, **kwargs):
         if models is None:
-            models = ["anthropic/claude-opus-4", "openai/gpt-4o"]
+            models = ["opencode/anthropic/claude-opus-4", "opencode/openai/gpt-4o"]
         fi = scripted_input(answers)
         buf = io.StringIO()
         with (

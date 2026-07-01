@@ -1,4 +1,4 @@
-"""Shared, dependency-free runtime primitives and registry.
+"""Shared, dependency-free provider primitives and registry.
 
 This module imports NOTHING from the `director` package to avoid future import cycles.
 Allowed imports: stdlib only (Python >= 3.11).
@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 # --------------------------------------------------------------------------- #
-# _CLEAN_ENV — runtime subprocess environment (byproducts handled by gate's ignore matcher)
+# _CLEAN_ENV — provider subprocess environment (byproducts handled by gate's ignore matcher)
 # --------------------------------------------------------------------------- #
 
 _CLEAN_ENV = {**os.environ}
@@ -19,7 +19,7 @@ _CLEAN_ENV.pop("PYTHONDONTWRITEBYTECODE", None)
 
 
 # --------------------------------------------------------------------------- #
-# RunResult — structured result from a runtime invocation
+# RunResult — structured result from a provider invocation
 # --------------------------------------------------------------------------- #
 
 
@@ -42,13 +42,12 @@ class RunResult:
 
 
 # --------------------------------------------------------------------------- #
-# Runtime — protocol for runtime implementations
+# Provider — protocol for provider implementations
 # --------------------------------------------------------------------------- #
 
 
-class Runtime(Protocol):
+class Provider(Protocol):
     name: str
-    providers: frozenset[str]
 
     def run(
         self,
@@ -66,40 +65,39 @@ class Runtime(Protocol):
     def discover_models(self) -> list[str]:
         """Additive, init-time-only convenience hook (NOT used by resolution).
 
-        Returns ready-to-paste "<provider>/<model>" tier strings (e.g.
+        Returns ready-to-paste "<provider>/<model-ref>" tier strings (e.g.
         "opencode/anthropic/claude-x" or "claude-code/opus").  Returns an
-        empty list [] when the runtime's source is unavailable.  MUST NEVER raise.
+        empty list [] when the provider's source is unavailable.  MUST NEVER raise.
         """
         ...
 
 
 # --------------------------------------------------------------------------- #
-# Registry — global provider-segment → runtime mapping
+# Registry — global provider-name → provider mapping
 # --------------------------------------------------------------------------- #
 
-_REGISTRY: dict[str, Runtime] = {}
+_REGISTRY: dict[str, Provider] = {}
 
 
-def register(rt: Runtime) -> None:
-    for provider in rt.providers:
-        if provider in _REGISTRY:
-            raise ValueError(
-                f"Provider {provider!r} already claimed by "
-                f"{_REGISTRY[provider].name!r}; cannot also be used by {rt.name!r}"
-            )
-    for provider in rt.providers:
-        _REGISTRY[provider] = rt
+def register(prov: Provider) -> None:
+    if prov.name in _REGISTRY:
+        raise ValueError(
+            f"Provider {prov.name!r} already registered by "
+            f"{_REGISTRY[prov.name].__class__.__name__}; "
+            f"cannot also be used by {prov.__class__.__name__}"
+        )
+    _REGISTRY[prov.name] = prov
 
 
-def resolve(provider: str) -> Runtime | None:
+def resolve(provider: str) -> Provider | None:
     return _REGISTRY.get(provider)
 
 
-def runtime_for_model(model: str) -> Runtime | None:
+def provider_for_model(model: str) -> Provider | None:
     provider = model.split("/", 1)[0]
     return resolve(provider)
 
 
-def runtimes() -> list[Runtime]:
-    """Return the unique registered runtime instances in stable registration order."""
-    return list(dict.fromkeys(_REGISTRY.values()))
+def providers() -> list[Provider]:
+    """Return registered provider instances in stable registration order."""
+    return list(_REGISTRY.values())

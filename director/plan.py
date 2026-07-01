@@ -406,7 +406,7 @@ def run_plan(
     repo = Path(repo).resolve()
     fdir = repo / ".director"
     logs = fdir / "logs"
-    setup.ensure_director_gitignore(repo)  # never let `git add -A` commit .director runtime files
+    setup.ensure_director_gitignore(repo)  # never let `git add -A` commit generated .director files
     ledger = CostLedger(fdir / "costs.jsonl")
     prog = PlanProgress.load(repo)
 

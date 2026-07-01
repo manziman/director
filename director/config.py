@@ -110,18 +110,56 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+def _ensure_builtin_providers_registered():
+    """Import built-in providers and ensure the current registry has their keys."""
+    from director import claudecode, opencode, provider
+
+    for provider_cls in (claudecode.ClaudeCodeProvider, opencode.OpenCodeProvider):
+        if provider.resolve(provider_cls.name) is None:
+            provider.register(provider_cls())
+    return provider
+
+
+def _provider_name(value: str) -> str:
+    return value.split("/", 1)[0]
+
+
+def _unknown_provider_error(*, label: str, value: str, known: list[str]) -> ValueError:
+    name = _provider_name(value)
+    return ValueError(
+        f"unknown provider {name!r} in {label} {value!r}. "
+        f"Prefix the tier with the tool that runs it, e.g. 'opencode/{value}'. "
+        f"Known providers: {', '.join(known)}"
+    )
+
+
+def _validate_provider_keys(tiers: dict[str, str], pricing: dict[str, dict]) -> None:
+    provider = _ensure_builtin_providers_registered()
+    known = sorted(p.name for p in provider.providers())
+
+    for tier in tiers.values():
+        if provider.resolve(_provider_name(tier)) is None:
+            raise _unknown_provider_error(label="tier", value=tier, known=known)
+
+    for tier in pricing:
+        if provider.resolve(_provider_name(tier)) is None:
+            raise _unknown_provider_error(label="pricing key", value=tier, known=known)
+
+
 def _build_config(data: dict, path: Path) -> Config:
     """Validate tiers completeness and construct a Config from parsed data."""
     tiers = data.get("tiers", {})
     missing = [r for r in ROLES if r not in tiers]
     if missing:
         raise ValueError(f"[tiers] in {path} is missing roles: {', '.join(missing)}")
+    pricing = data.get("pricing", {})
+    _validate_provider_keys(tiers, pricing)
 
     return Config(
         path=path,
         tiers=tiers,
         gates=data.get("gates", {}),
-        pricing=data.get("pricing", {}),
+        pricing=pricing,
         limits=data.get("limits", {}),
         sampling=data.get("sampling", {}),
         local=data.get("providers", {}).get("local", {}),

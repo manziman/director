@@ -1,6 +1,6 @@
 # director
 
-**A model-agnostic decomposition coding harness — a thin orchestrator over agent runtimes ([OpenCode](https://opencode.ai), Claude Code, …).**
+**A model-agnostic decomposition coding harness — a thin orchestrator over agent providers ([OpenCode](https://opencode.ai), Claude Code, …).**
 
 director tests one hypothesis:
 
@@ -11,9 +11,10 @@ director tests one hypothesis:
 > merges. This cuts token cost dramatically with minimal quality loss.
 
 It is **model-agnostic by construction**: roles (`planner`, `executor`, `reviewer`, …)
-bind to `provider/model` strings in config. Switching the executor from a local 27B to
-a frontier model — or anything in between — is a one-line config edit, never a code
-change. When using an OpenCode-owned provider tier, director drives OpenCode headlessly and inherits its 75+ providers. Claude Code tiers use the Claude Code CLI.
+bind to `provider/model-ref` strings in config. The provider is the tool director
+drives (`opencode` or `claude-code`); the rest of the tier string is whatever that
+tool expects. Switching the executor from a local 27B to a frontier model — or
+anything in between — is a one-line config edit, never a code change.
 
 > **Status:** beta. Validated end-to-end (plan → run → bench) under local, cheap-cloud,
 > and all-frontier executor tiers.
@@ -33,17 +34,17 @@ pipx install director-cli
 pip install director-cli
 ```
 
-### Prerequisites (runtime)
+### Prerequisites (providers)
 
 director orchestrates other tools rather than replacing them, so it needs:
 
 - **Python ≥ 3.11**
 - **git** on `PATH` (isolation is real git worktrees + branches)
-- **[OpenCode](https://opencode.ai)** on `PATH`, if you use an OpenCode-owned provider tier (anthropic, openai, google, bedrock, openrouter, lmstudio, …)
+- **[OpenCode](https://opencode.ai)** on `PATH`, if you use an `opencode/*` tier
 - **Claude Code** (`claude`) on `PATH`, if you use a `claude-code/*` tier
 - **Provider auth**: if you use OpenCode tiers, configure auth in OpenCode via `opencode auth`; Claude Code tiers use the Claude Code CLI's own auth
 
-director never manages provider keys itself — each runtime handles its own credentials.
+director never manages model-provider keys itself — each tool handles its own credentials.
 
 ---
 
@@ -60,7 +61,7 @@ director init
 $EDITOR .director/config.toml
 
 # 2. Install director's role agents into .opencode/ (+ gitignore, starter opencode.json)
-#    — written only when an OpenCode provider tier is configured
+#    — written only when the opencode provider is configured
 director sync-agents
 
 # 3. Plan: brainstorm → spec → test-gated task DAG (two approval gates)
@@ -96,7 +97,7 @@ director run
 | `director status` | Per-node progress, attempts, cost, and the executor-tier completion rate. |
 | `director bench "<task>" --profiles a,b,c` | Run the **same** task (same frozen acceptance tests) across profile variants and diff cost / quality / wall-time. |
 | `director init [--repo .]` | Interactively create `.director/config.toml` — asks which model to use per role and your gate commands. |
-| `director sync-agents` | (Re)install the role agents into `<repo>/.opencode/` (plus gitignore, starter `opencode.json`) — only when an OpenCode provider tier is configured. |
+| `director sync-agents` | (Re)install the role agents into `<repo>/.opencode/` (plus gitignore, starter `opencode.json`) — only when an `opencode/*` tier is configured. |
 
 All state lives under `.director/` (resumable, debuggable): `plan.json`, `state.json`,
 `costs.jsonl`, `metrics.jsonl`, per-call `logs/`, and `bench/`.
@@ -105,7 +106,7 @@ All state lives under `.director/` (resumable, debuggable): `plan.json`, `state.
 
 `director init` interactively creates `.director/config.toml` — it asks which model
 to use for each role and what your deterministic gate commands are, then writes the
-config for you. A config is just roles → `provider/model` strings, the deterministic
+config for you. A config is just roles → `provider/model-ref` strings, the deterministic
 gate commands, per-model pricing, and run limits. For the full/advanced schema, see
 the complete, commented [`director/config.example.toml`](director/config.example.toml):
 it shows how to bind the executor tier to a local
@@ -130,7 +131,7 @@ under `[tiers]`:
 # ~/.director/config.toml
 [tiers]
 planner  = "claude-code/opus"
-executor = "openrouter/deepseek/deepseek-v4-pro"
+executor = "opencode/openrouter/deepseek/deepseek-v4-pro"
 reviewer = "claude-code/sonnet"
 ```
 
@@ -139,11 +140,11 @@ And a repo file overrides just one role:
 ```toml
 # <repo>/.director/config.toml
 [tiers]
-executor = "lmstudio/qwen3.6-27b-mtp"
+executor = "opencode/lmstudio/qwen3.6-27b-mtp"
 ```
 
 The resulting effective config uses the repo-local `executor` but falls back to the user
-values for `planner` and `reviewer` (each role binds to a single `"provider/model"`
+values for `planner` and `reviewer` (each role binds to a single `"provider/model-ref"`
 string — the repo `[tiers]` overrides only the roles it names).
 
 ### `director init` target selection
