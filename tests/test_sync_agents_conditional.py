@@ -45,7 +45,6 @@ def _cfg(tiers: dict) -> Config:
         pricing={},
         limits={},
         sampling={},
-        local={},
         review={},
     )
 

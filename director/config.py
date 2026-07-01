@@ -22,7 +22,6 @@ class Config:
     pricing: dict[str, dict]  # "provider/model" -> {"input": $/Mtok, "output": $/Mtok}
     limits: dict  # node_timeout_secs, cost_ceiling_usd, max_attempts
     sampling: dict  # role -> {temperature, top_p, top_k}
-    local: dict  # providers.local: base_url, api_key
     review: dict  # two-stage review knobs (Phase 2.5)
     # Optional declared target stack; currently declaration-only (available on Config);
     # recon remains the primary signal to the planner.
@@ -166,7 +165,6 @@ def _build_config(data: dict, path: Path) -> Config:
         pricing=pricing,
         limits=data.get("limits", {}),
         sampling=data.get("sampling", {}),
-        local=data.get("providers", {}).get("local", {}),
         review=data.get("review", {}),
         target=data.get("target", {}),
     )

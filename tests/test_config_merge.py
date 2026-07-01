@@ -55,10 +55,6 @@ node_timeout_secs = 100
 cost_ceiling_usd  = 5.0
 max_attempts      = 2
 
-[providers.local]
-base_url = "http://user-host:1234"
-api_key  = "user-key"
-
 [sampling.planner]
 temperature = 0.1
 top_p       = 0.9
@@ -80,9 +76,6 @@ lint = "repo-lint-cmd"
 
 [limits]
 max_attempts = 9
-
-[providers.local]
-api_key = "repo-key"
 
 [sampling.planner]
 top_p = 0.5
@@ -213,7 +206,6 @@ class LoadUserOnlyTests(_HomeIsolationMixin, unittest.TestCase):
         self.assertEqual(cfg.tiers["planner"], "opencode/user/plan")
         self.assertEqual(cfg.tiers["executor"], "opencode/user/exec")
         self.assertEqual(cfg.gates["lint"], "user-lint-cmd")
-        self.assertEqual(cfg.local["base_url"], "http://user-host:1234")
         self.assertEqual(cfg.limits["max_attempts"], 2)
 
     def test_active_path_is_user_path(self):
@@ -266,10 +258,6 @@ class LoadBothMergeTests(_HomeIsolationMixin, unittest.TestCase):
         self.assertEqual(self.cfg.limits["max_attempts"], 9)  # overridden
         self.assertEqual(self.cfg.limits["node_timeout_secs"], 100)  # fallback
         self.assertEqual(self.cfg.limits["cost_ceiling_usd"], 5.0)  # fallback
-
-    def test_providers_local_override_and_fallback(self):
-        self.assertEqual(self.cfg.local["api_key"], "repo-key")  # overridden
-        self.assertEqual(self.cfg.local["base_url"], "http://user-host:1234")  # fallback
 
     def test_sampling_role_override_and_fallback(self):
         self.assertEqual(self.cfg.sampling["planner"]["top_p"], 0.5)  # overridden
@@ -340,7 +328,6 @@ class LoadFileIgnoresUserConfigTests(_HomeIsolationMixin, unittest.TestCase):
         cfg = config.load_file(repo_cfg)
         self.assertEqual(cfg.tiers["planner"], "opencode/repo/plan")
         self.assertNotIn("lint", cfg.gates)  # user's lint not merged
-        self.assertEqual(cfg.local, {})  # user's providers.local not merged
         self.assertNotIn("opencode/user/plan", cfg.pricing)  # user's pricing not merged
 
 

@@ -69,7 +69,6 @@ def mk_config(d: Path, *, executor="opencode/local/exec", flake_runs=2) -> Confi
             "cost_ceiling_usd": 0.0,
         },
         sampling={},
-        local={},
         review={"stage_two": True, "stage_two_file_threshold": 3, "stage_one_llm": False},
     )
 

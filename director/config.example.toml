@@ -38,17 +38,11 @@ explorer    = "opencode/lmstudio/qwen3.6-27b-mtp"                      # read-on
 reviewer    = "opencode/amazon-bedrock/anthropic.claude-sonnet-4-6"    # stage-two code review (NEVER the cheap/local tier)
 escalation  = "opencode/amazon-bedrock/anthropic.claude-sonnet-4-6"    # per-task fallback when the executor exhausts attempts
 #
-# cheap-cloud (no local GPU): set executor/explorer to a low-cost cloud model and
-#   delete the [providers.local] block, e.g.
+# cheap-cloud (no local GPU): set executor/explorer to a low-cost cloud model, e.g.
 #     executor = "opencode/openrouter/deepseek/deepseek-v4-pro"
 # all-frontier baseline (expensive control): set executor = reviewer = escalation
 #   to the same frontier model as the planner.
 # Claude Code: e.g.  planner = "claude-code/opus"   (drive planning via the `claude` CLI)
-
-# Only needed if a tier above points at a local OpenAI-compatible endpoint.
-[providers.local]
-base_url = "http://localhost:1234/v1"   # e.g. LM Studio; load a model there first
-api_key  = "sk-noauth"
 
 # Sampling overrides per role (optional; match the model card). Example for a
 # Qwen3.6 "thinking" executor:
