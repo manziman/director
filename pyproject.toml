@@ -51,9 +51,15 @@ dev = [
 [tool.hatch.version]
 path = "director/__init__.py"
 
+# Package data under director/agent_templates/ is included automatically, BUT
+# hatchling also honors .gitignore patterns — `artifacts` force-includes the
+# templates even if an ignore pattern matches them (a bare `*.json` ignore
+# shipped 0.8.1 without opencode.json).
+[tool.hatch.build]
+artifacts = ["director/agent_templates/*"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["director"]
-# agent_templates/*.md and *.json live inside the package dir → included automatically.
 
 [tool.hatch.build.targets.sdist]
 include = ["director", "README.md", "LICENSE", "CHANGELOG.md"]
