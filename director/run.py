@@ -194,7 +194,7 @@ def _process_node(
 def run_job(repo: str, cfg: Config, parallel: int, max_attempts: int, log) -> dict:
     repo = Path(repo).resolve()
     fdir = repo / ".director"
-    setup.ensure_director_gitignore(repo)  # never let `git add -A` commit .director runtime files
+    setup.ensure_director_gitignore(repo)  # never let `git add -A` commit generated .director files
     plan = Plan.from_json((fdir / "plan.json").read_text())
     state = RunState.load_or_init(repo, plan)
     ledger = CostLedger(fdir / "costs.jsonl")

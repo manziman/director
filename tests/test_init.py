@@ -7,7 +7,7 @@ monkeypatched `input`/`print`), a pure TOML renderer that must round-trip
 through `director.config.load_file`, and the `run_init` orchestrator.
 
 The obsolete DiscoverModelsTests class that mocked init.subprocess has been
-removed; that subprocess behavior is tested against OpenCodeRuntime directly.
+removed; that subprocess behavior is tested against OpenCodeProvider directly.
 """
 
 import builtins
@@ -25,7 +25,7 @@ from unittest import mock
 os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-import director.runtime as _rt
+import director.provider as _rt
 from director import config, init
 from director.config import ROLES
 
@@ -87,8 +87,8 @@ class ParseModelsTests(unittest.TestCase):
 class DiscoverModelsRegistryTests(unittest.TestCase):
     """Registry-union semantics for discover_models().
 
-    discover_models() must iterate registered runtimes in registration order,
-    collect each runtime's discover_models() tier strings, deduplicate by
+    discover_models() must iterate registered providers in registration order,
+    collect each provider's discover_models() tier strings, deduplicate by
     exact string (first occurrence wins) without alphabetical re-sorting,
     and return the resulting list.
     """
@@ -104,13 +104,12 @@ class DiscoverModelsRegistryTests(unittest.TestCase):
 
     @staticmethod
     def _fake_rt(name, providers, tiers):
-        """Build a minimal runtime stub whose discover_models() returns `tiers`."""
+        """Build a minimal provider stub whose discover_models() returns `tiers`."""
 
         class _Rt:
             pass
 
         _Rt.name = name
-        _Rt.providers = frozenset(providers)
         _returns = list(tiers)
 
         def discover_models(self_):
@@ -137,7 +136,7 @@ class DiscoverModelsRegistryTests(unittest.TestCase):
         _rt.register(rt)
         self.assertIsInstance(init.discover_models(), list)
 
-    # -- single runtime -------------------------------------------------------
+    # -- single provider -------------------------------------------------------
 
     def test_single_runtime_returns_its_tiers(self):
         rt = self._fake_rt("r1", ["prov1"], ["prov1/alpha", "prov1/beta"])
@@ -149,7 +148,7 @@ class DiscoverModelsRegistryTests(unittest.TestCase):
         _rt.register(rt)
         self.assertEqual(init.discover_models(), [])
 
-    # -- union across runtimes ------------------------------------------------
+    # -- union across providers ------------------------------------------------
 
     def test_two_runtimes_unioned_in_registration_order(self):
         r1 = self._fake_rt("r1", ["p1"], ["p1/a", "p1/b"])
@@ -190,7 +189,7 @@ class DiscoverModelsRegistryTests(unittest.TestCase):
         _rt.register(r2)
         result = init.discover_models()
         self.assertEqual(result.count("shared/x"), 1)
-        # The first runtime's "shared/x" must appear before r2's unique models.
+        # The first provider's "shared/x" must appear before r2's unique models.
         self.assertLess(result.index("shared/x"), result.index("p2/only"))
 
     def test_dedup_within_single_runtime(self):
@@ -198,7 +197,7 @@ class DiscoverModelsRegistryTests(unittest.TestCase):
         _rt.register(rt)
         self.assertEqual(init.discover_models(), ["p/a", "p/b", "p/c"])
 
-    def test_full_dedup_across_three_runtimes(self):
+    def test_full_dedup_across_three_providers(self):
         r1 = self._fake_rt("r1", ["p1"], ["common/m", "p1/only"])
         r2 = self._fake_rt("r2", ["p2"], ["common/m", "p2/only"])
         r3 = self._fake_rt("r3", ["p3"], ["common/m", "p3/only"])
@@ -433,7 +432,7 @@ class RunInitTests(unittest.TestCase):
         return ["1"] * len(ROLES) + list(gate_answers)
 
     def test_menu_flow_writes_loadable_config(self):
-        models = ["anthropic/claude-opus-4", "openai/gpt-4o"]
+        models = ["opencode/anthropic/claude-opus-4", "opencode/openai/gpt-4o"]
         path, _, _ = self._run(
             models=models,
             answers=self._menu_answers(["", "ruff check .", ""]),
@@ -442,31 +441,31 @@ class RunInitTests(unittest.TestCase):
         self.assertTrue(self.cfg_path.exists())
         cfg = config.load_file(self.cfg_path)
         for role in ROLES:
-            self.assertEqual(cfg.tiers[role], "anthropic/claude-opus-4")
+            self.assertEqual(cfg.tiers[role], "opencode/anthropic/claude-opus-4")
         self.assertEqual(cfg.gates["test"], "")
         self.assertEqual(cfg.gates["lint"], "ruff check .")
         self.assertEqual(cfg.gates["typecheck"], "")
 
     def test_all_six_tiers_present(self):
-        path, _, _ = self._run(models=["a/b"], answers=self._menu_answers(["", "", ""]))
+        path, _, _ = self._run(models=["opencode/a/b"], answers=self._menu_answers(["", "", ""]))
         cfg = config.load_file(self.cfg_path)
         self.assertEqual(set(cfg.tiers), set(ROLES))
 
     def test_creates_parent_director_dir(self):
         self.assertFalse((self.tmp / ".director").exists())
-        self._run(models=["a/b"], answers=self._menu_answers(["", "", ""]))
+        self._run(models=["opencode/a/b"], answers=self._menu_answers(["", "", ""]))
         self.assertTrue((self.tmp / ".director").is_dir())
 
     def test_freetext_flow_when_discovery_empty(self):
         # empty models -> free-text per role, then 3 gates.
-        answers = [f"prov/{r}" for r in ROLES] + ["pytest", "", ""]
+        answers = [f"opencode/prov/{r}" for r in ROLES] + ["pytest", "", ""]
         path, out, _ = self._run(models=[], answers=answers)
         cfg = config.load_file(self.cfg_path)
         for role in ROLES:
-            self.assertEqual(cfg.tiers[role], f"prov/{role}")
+            self.assertEqual(cfg.tiers[role], f"opencode/prov/{role}")
         self.assertEqual(cfg.gates["test"], "pytest")
         # warning must be provider-neutral: must mention free-text fallback and
-        # must NOT name any specific runtime command like "opencode".
+        # must NOT name any specific provider command like "opencode".
         self.assertIn(
             "free-text",
             out,
@@ -481,7 +480,7 @@ class RunInitTests(unittest.TestCase):
     def test_clobber_declined_does_not_overwrite(self):
         self.cfg_path.parent.mkdir(parents=True)
         self.cfg_path.write_text("ORIGINAL\n")
-        path, out, fi = self._run(models=["a/b"], answers=["n"])
+        path, out, fi = self._run(models=["opencode/a/b"], answers=["n"])
         self.assertEqual(path, self.cfg_path)
         # untouched
         self.assertEqual(self.cfg_path.read_text(), "ORIGINAL\n")
@@ -491,32 +490,32 @@ class RunInitTests(unittest.TestCase):
     def test_clobber_declined_by_default_empty_answer(self):
         self.cfg_path.parent.mkdir(parents=True)
         self.cfg_path.write_text("ORIGINAL\n")
-        self._run(models=["a/b"], answers=[""])
+        self._run(models=["opencode/a/b"], answers=[""])
         self.assertEqual(self.cfg_path.read_text(), "ORIGINAL\n")
 
     def test_clobber_accepted_overwrites(self):
         self.cfg_path.parent.mkdir(parents=True)
         self.cfg_path.write_text("ORIGINAL\n")
         self._run(
-            models=["a/b"],
+            models=["opencode/a/b"],
             answers=["y"] + self._menu_answers(["", "", ""]),
         )
         self.assertNotEqual(self.cfg_path.read_text(), "ORIGINAL\n")
         cfg = config.load_file(self.cfg_path)
-        self.assertEqual(cfg.tiers["planner"], "a/b")
+        self.assertEqual(cfg.tiers["planner"], "opencode/a/b")
 
     def test_clobber_accepted_yes_word(self):
         self.cfg_path.parent.mkdir(parents=True)
         self.cfg_path.write_text("ORIGINAL\n")
         self._run(
-            models=["a/b"],
+            models=["opencode/a/b"],
             answers=["YES"] + self._menu_answers(["", "", ""]),
         )
         cfg = config.load_file(self.cfg_path)
-        self.assertEqual(cfg.tiers["planner"], "a/b")
+        self.assertEqual(cfg.tiers["planner"], "opencode/a/b")
 
     def test_gates_table_has_all_three_keys(self):
-        self._run(models=["a/b"], answers=self._menu_answers(["t", "l", "tc"]))
+        self._run(models=["opencode/a/b"], answers=self._menu_answers(["t", "l", "tc"]))
         cfg = config.load_file(self.cfg_path)
         self.assertEqual(cfg.gates, {"test": "t", "lint": "l", "typecheck": "tc"})
 

@@ -1,19 +1,20 @@
-"""Acceptance tests for CLAUDE_CODE_MODELS constant + ClaudeCodeRuntime.discover_models.
+"""Acceptance tests for CLAUDE_CODE_MODELS constant + ClaudeCodeProvider.discover_models.
 
 Covers:
   - CLAUDE_CODE_MODELS exists as a module-level tuple with the three stable aliases
-  - ClaudeCodeRuntime.discover_models exists and has the right signature
+  - ClaudeCodeProvider.discover_models exists and has the right signature
   - Return value is exactly ["claude-code/opus", "claude-code/sonnet", "claude-code/haiku"]
   - Returns a list (not a tuple or other iterable)
   - No subprocess work — discover_models never touches the filesystem or shell
   - Always returns the fixed list regardless of claude binary presence
-  - Existing ClaudeCodeRuntime interface (run, system_prompt_for) is untouched
+  - Existing ClaudeCodeProvider interface (run, system_prompt_for) is untouched
   - director.claudecode does NOT import from director.opencode
 
 Run: python3 -m unittest tests.test_claudecode_discovery -v
 """
 
 import ast
+import importlib
 import inspect
 import pathlib
 import sys
@@ -24,6 +25,15 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import director.claudecode as cc
 
 _CC_SRC = pathlib.Path(__file__).resolve().parent.parent / "director" / "claudecode.py"
+
+
+def setUpModule():
+    """Refresh Claude Code adapter after provider registry isolation tests reload provider."""
+    import director.provider as provider
+
+    importlib.reload(provider)
+    importlib.reload(cc)
+
 
 EXPECTED_MODELS = ["claude-code/opus", "claude-code/sonnet", "claude-code/haiku"]
 
@@ -69,25 +79,25 @@ class TestClaudeCodeModelsConstant(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# 2. ClaudeCodeRuntime.discover_models — existence and signature
+# 2. ClaudeCodeProvider.discover_models — existence and signature
 # --------------------------------------------------------------------------- #
 
 
 class TestDiscoverModelsExists(unittest.TestCase):
     def test_claudecode_runtime_has_discover_models(self):
         self.assertTrue(
-            hasattr(cc.ClaudeCodeRuntime, "discover_models"),
-            "ClaudeCodeRuntime must have a discover_models attribute",
+            hasattr(cc.ClaudeCodeProvider, "discover_models"),
+            "ClaudeCodeProvider must have a discover_models attribute",
         )
 
     def test_discover_models_is_callable(self):
         self.assertTrue(
-            callable(getattr(cc.ClaudeCodeRuntime, "discover_models", None)),
-            "ClaudeCodeRuntime.discover_models must be callable",
+            callable(getattr(cc.ClaudeCodeProvider, "discover_models", None)),
+            "ClaudeCodeProvider.discover_models must be callable",
         )
 
     def test_discover_models_takes_only_self(self):
-        sig = inspect.signature(cc.ClaudeCodeRuntime.discover_models)
+        sig = inspect.signature(cc.ClaudeCodeProvider.discover_models)
         params = list(sig.parameters.keys())
         self.assertEqual(
             params,
@@ -103,39 +113,39 @@ class TestDiscoverModelsExists(unittest.TestCase):
 
 class TestDiscoverModelsReturnValue(unittest.TestCase):
     def setUp(self):
-        self.runtime = cc.ClaudeCodeRuntime()
+        self.provider = cc.ClaudeCodeProvider()
 
     def test_returns_list(self):
-        result = self.runtime.discover_models()
+        result = self.provider.discover_models()
         self.assertIsInstance(result, list, "discover_models must return a list")
 
     def test_returns_exactly_three_items(self):
-        result = self.runtime.discover_models()
+        result = self.provider.discover_models()
         self.assertEqual(len(result), 3, f"discover_models must return 3 items, got {len(result)}")
 
     def test_returns_expected_list(self):
-        result = self.runtime.discover_models()
+        result = self.provider.discover_models()
         self.assertEqual(result, EXPECTED_MODELS)
 
     def test_opus_entry_present(self):
-        result = self.runtime.discover_models()
+        result = self.provider.discover_models()
         self.assertIn("claude-code/opus", result)
 
     def test_sonnet_entry_present(self):
-        result = self.runtime.discover_models()
+        result = self.provider.discover_models()
         self.assertIn("claude-code/sonnet", result)
 
     def test_haiku_entry_present(self):
-        result = self.runtime.discover_models()
+        result = self.provider.discover_models()
         self.assertIn("claude-code/haiku", result)
 
     def test_all_entries_are_strings(self):
-        result = self.runtime.discover_models()
+        result = self.provider.discover_models()
         for item in result:
             self.assertIsInstance(item, str, f"All returned items must be str, got {type(item)}")
 
     def test_all_entries_have_claude_code_prefix(self):
-        result = self.runtime.discover_models()
+        result = self.provider.discover_models()
         for item in result:
             self.assertTrue(
                 item.startswith("claude-code/"),
@@ -143,7 +153,7 @@ class TestDiscoverModelsReturnValue(unittest.TestCase):
             )
 
     def test_order_is_opus_sonnet_haiku(self):
-        result = self.runtime.discover_models()
+        result = self.provider.discover_models()
         self.assertEqual(result[0], "claude-code/opus")
         self.assertEqual(result[1], "claude-code/sonnet")
         self.assertEqual(result[2], "claude-code/haiku")
@@ -159,7 +169,7 @@ class TestDiscoverModelsNoSubprocess(unittest.TestCase):
         import subprocess as _subprocess
         from unittest.mock import patch
 
-        runtime = cc.ClaudeCodeRuntime()
+        provider = cc.ClaudeCodeProvider()
         with (
             patch.object(
                 _subprocess, "run", side_effect=AssertionError("subprocess.run called")
@@ -169,7 +179,7 @@ class TestDiscoverModelsNoSubprocess(unittest.TestCase):
             ) as mock_popen,
         ):
             try:
-                runtime.discover_models()
+                provider.discover_models()
             except AssertionError as exc:
                 self.fail(f"discover_models called subprocess: {exc}")
         mock_run.assert_not_called()
@@ -179,13 +189,13 @@ class TestDiscoverModelsNoSubprocess(unittest.TestCase):
         import subprocess as _subprocess
         from unittest.mock import patch
 
-        runtime = cc.ClaudeCodeRuntime()
+        provider = cc.ClaudeCodeProvider()
         with (
             patch.object(_subprocess, "run", side_effect=FileNotFoundError("claude not found")),
             patch.object(_subprocess, "Popen", side_effect=FileNotFoundError("claude not found")),
         ):
             try:
-                runtime.discover_models()
+                provider.discover_models()
             except Exception as exc:
                 self.fail(f"discover_models raised {type(exc).__name__}: {exc}")
 
@@ -193,47 +203,46 @@ class TestDiscoverModelsNoSubprocess(unittest.TestCase):
         import subprocess as _subprocess
         from unittest.mock import patch
 
-        runtime = cc.ClaudeCodeRuntime()
+        provider = cc.ClaudeCodeProvider()
         with (
             patch.object(_subprocess, "run", side_effect=FileNotFoundError("claude not found")),
             patch.object(_subprocess, "Popen", side_effect=FileNotFoundError("claude not found")),
         ):
-            result = runtime.discover_models()
+            result = provider.discover_models()
         self.assertEqual(result, EXPECTED_MODELS)
 
     def test_idempotent_multiple_calls(self):
-        runtime = cc.ClaudeCodeRuntime()
-        first = runtime.discover_models()
-        second = runtime.discover_models()
+        provider = cc.ClaudeCodeProvider()
+        first = provider.discover_models()
+        second = provider.discover_models()
         self.assertEqual(first, second)
 
 
 # --------------------------------------------------------------------------- #
-# 5. Existing ClaudeCodeRuntime interface unchanged
+# 5. Existing ClaudeCodeProvider interface unchanged
 # --------------------------------------------------------------------------- #
 
 
 class TestExistingInterfaceUnchanged(unittest.TestCase):
     def test_run_method_still_present(self):
         self.assertTrue(
-            callable(getattr(cc.ClaudeCodeRuntime, "run", None)),
-            "ClaudeCodeRuntime.run must still be callable",
+            callable(getattr(cc.ClaudeCodeProvider, "run", None)),
+            "ClaudeCodeProvider.run must still be callable",
         )
 
     def test_system_prompt_for_still_present(self):
         self.assertTrue(
-            callable(getattr(cc.ClaudeCodeRuntime, "system_prompt_for", None)),
-            "ClaudeCodeRuntime.system_prompt_for must still be callable",
+            callable(getattr(cc.ClaudeCodeProvider, "system_prompt_for", None)),
+            "ClaudeCodeProvider.system_prompt_for must still be callable",
         )
 
-    def test_runtime_name_still_claude_code(self):
-        runtime = cc.ClaudeCodeRuntime()
-        self.assertEqual(runtime.name, "claude-code")
+    def test_provider_name_still_claude_code(self):
+        provider = cc.ClaudeCodeProvider()
+        self.assertEqual(provider.name, "claude-code")
 
-    def test_providers_frozenset_still_present(self):
-        runtime = cc.ClaudeCodeRuntime()
-        self.assertIsInstance(runtime.providers, frozenset)
-        self.assertIn("claude-code", runtime.providers)
+    def test_provider_declares_name_only(self):
+        provider = cc.ClaudeCodeProvider()
+        self.assertFalse(hasattr(provider, "providers"))
 
     def test_run_claude_still_importable(self):
         from director.claudecode import run_claude

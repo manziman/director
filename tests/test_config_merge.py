@@ -38,12 +38,12 @@ from director.config import ROLES  # noqa: E402
 # expect the deep merge to descend into.
 USER_TOML = """
 [tiers]
-planner     = "user/plan"
-test_author = "user/ta"
-executor    = "user/exec"
-explorer    = "user/expl"
-reviewer    = "user/rev"
-escalation  = "user/esc"
+planner     = "opencode/user/plan"
+test_author = "opencode/user/ta"
+executor    = "opencode/user/exec"
+explorer    = "opencode/user/expl"
+reviewer    = "opencode/user/rev"
+escalation  = "opencode/user/esc"
 
 [gates]
 test      = "user-test-cmd"
@@ -63,7 +63,7 @@ api_key  = "user-key"
 temperature = 0.1
 top_p       = 0.9
 
-[pricing."user/plan"]
+[pricing."opencode/user/plan"]
 input  = 1.0
 output = 2.0
 """
@@ -73,7 +73,7 @@ output = 2.0
 # to the user values via deep merge.
 REPO_OVERRIDE_TOML = """
 [tiers]
-executor = "repo/exec"
+executor = "opencode/repo/exec"
 
 [gates]
 lint = "repo-lint-cmd"
@@ -92,12 +92,12 @@ top_p = 0.5
 # the "repo-only load is identical to today" regression.
 REPO_FULL_TOML = """
 [tiers]
-planner     = "repo/plan"
-test_author = "repo/ta"
-executor    = "repo/exec"
-explorer    = "repo/expl"
-reviewer    = "repo/rev"
-escalation  = "repo/esc"
+planner     = "opencode/repo/plan"
+test_author = "opencode/repo/ta"
+executor    = "opencode/repo/exec"
+explorer    = "opencode/repo/expl"
+reviewer    = "opencode/repo/rev"
+escalation  = "opencode/repo/esc"
 
 [gates]
 test = "repo-test-cmd"
@@ -210,8 +210,8 @@ class LoadUserOnlyTests(_HomeIsolationMixin, unittest.TestCase):
 
     def test_config_built_from_user_data(self):
         cfg = config.load(self.repo)
-        self.assertEqual(cfg.tiers["planner"], "user/plan")
-        self.assertEqual(cfg.tiers["executor"], "user/exec")
+        self.assertEqual(cfg.tiers["planner"], "opencode/user/plan")
+        self.assertEqual(cfg.tiers["executor"], "opencode/user/exec")
         self.assertEqual(cfg.gates["lint"], "user-lint-cmd")
         self.assertEqual(cfg.local["base_url"], "http://user-host:1234")
         self.assertEqual(cfg.limits["max_attempts"], 2)
@@ -237,7 +237,7 @@ class LoadRepoOnlyRegressionTests(_HomeIsolationMixin, unittest.TestCase):
     def test_active_path_is_repo_path(self):
         cfg = config.load(self.repo)
         self.assertEqual(cfg.path, self.repo_cfg)
-        self.assertEqual(cfg.tiers["planner"], "repo/plan")
+        self.assertEqual(cfg.tiers["planner"], "opencode/repo/plan")
 
 
 # --------------------------------------------------------------------------- #
@@ -254,8 +254,8 @@ class LoadBothMergeTests(_HomeIsolationMixin, unittest.TestCase):
         self.assertEqual(self.cfg.path, self.repo_cfg)
 
     def test_tiers_override_and_fallback(self):
-        self.assertEqual(self.cfg.tiers["executor"], "repo/exec")  # overridden
-        self.assertEqual(self.cfg.tiers["planner"], "user/plan")  # fallback
+        self.assertEqual(self.cfg.tiers["executor"], "opencode/repo/exec")  # overridden
+        self.assertEqual(self.cfg.tiers["planner"], "opencode/user/plan")  # fallback
 
     def test_gates_override_and_fallback(self):
         self.assertEqual(self.cfg.gates["lint"], "repo-lint-cmd")  # overridden
@@ -277,7 +277,7 @@ class LoadBothMergeTests(_HomeIsolationMixin, unittest.TestCase):
 
     def test_user_only_table_passes_through(self):
         # pricing exists only in the user config; it must survive the merge.
-        self.assertEqual(self.cfg.pricing["user/plan"], {"input": 1.0, "output": 2.0})
+        self.assertEqual(self.cfg.pricing["opencode/user/plan"], {"input": 1.0, "output": 2.0})
 
 
 # --------------------------------------------------------------------------- #
@@ -289,36 +289,36 @@ class LoadMergedTiersCompletenessTests(_HomeIsolationMixin, unittest.TestCase):
         # UNION is complete, so the merged config must load without error.
         user_missing_executor = """
 [tiers]
-planner     = "user/plan"
-test_author = "user/ta"
-explorer    = "user/expl"
-reviewer    = "user/rev"
-escalation  = "user/esc"
+planner     = "opencode/user/plan"
+test_author = "opencode/user/ta"
+explorer    = "opencode/user/expl"
+reviewer    = "opencode/user/rev"
+escalation  = "opencode/user/esc"
 """
         repo_supplies_executor = """
 [tiers]
-executor = "repo/exec"
+executor = "opencode/repo/exec"
 """
         _write(self.home, user_missing_executor)
         _write(self.repo, repo_supplies_executor)
         cfg = config.load(self.repo)
         for role in ROLES:
             self.assertIn(role, cfg.tiers)
-        self.assertEqual(cfg.tiers["executor"], "repo/exec")
+        self.assertEqual(cfg.tiers["executor"], "opencode/repo/exec")
 
     def test_merged_missing_role_raises_valueerror_naming_it(self):
         # Neither side binds "escalation" -> the merged tiers are incomplete.
         user_missing = """
 [tiers]
-planner     = "user/plan"
-test_author = "user/ta"
-executor    = "user/exec"
-explorer    = "user/expl"
-reviewer    = "user/rev"
+planner     = "opencode/user/plan"
+test_author = "opencode/user/ta"
+executor    = "opencode/user/exec"
+explorer    = "opencode/user/expl"
+reviewer    = "opencode/user/rev"
 """
         repo_partial = """
 [tiers]
-executor = "repo/exec"
+executor = "opencode/repo/exec"
 """
         _write(self.home, user_missing)
         _write(self.repo, repo_partial)
@@ -338,10 +338,10 @@ class LoadFileIgnoresUserConfigTests(_HomeIsolationMixin, unittest.TestCase):
         # pull it in. load_file reads exactly one file.
         repo_cfg = _write(self.repo, REPO_FULL_TOML)
         cfg = config.load_file(repo_cfg)
-        self.assertEqual(cfg.tiers["planner"], "repo/plan")
+        self.assertEqual(cfg.tiers["planner"], "opencode/repo/plan")
         self.assertNotIn("lint", cfg.gates)  # user's lint not merged
         self.assertEqual(cfg.local, {})  # user's providers.local not merged
-        self.assertNotIn("user/plan", cfg.pricing)  # user's pricing not merged
+        self.assertNotIn("opencode/user/plan", cfg.pricing)  # user's pricing not merged
 
 
 if __name__ == "__main__":

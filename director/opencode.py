@@ -1,8 +1,7 @@
 """Headless OpenCode dispatch entrypoint.
 
-Resolves a runtime via the registry and delegates agent invocation to it.
-Re-exports RunResult, _CLEAN_ENV, and runtime_for_model from director.runtime
-for backward compatibility with existing import paths.
+Resolves a provider via the registry and delegates agent invocation to it.
+Re-exports RunResult, _CLEAN_ENV, and provider_for_model from director.provider.
 """
 
 from __future__ import annotations
@@ -12,67 +11,23 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-import director.claudecode  # noqa: F401 — ensures ClaudeCodeRuntime registers
+import director.claudecode  # noqa: F401 — ensures ClaudeCodeProvider registers
 from director import proc as proc_mod
-from director.runtime import (
+from director.provider import (
     _CLEAN_ENV,
-    _REGISTRY,
     RunResult,
+    provider_for_model,
+    providers,
     register,
-    runtime_for_model,
 )
 
 # --------------------------------------------------------------------------- #
-# OPENCODE_PROVIDERS — curated provider segments for OpenCode-owned dispatch
-# --------------------------------------------------------------------------- #
-
-OPENCODE_PROVIDERS: frozenset[str] = frozenset(
-    {
-        "anthropic",
-        "openai",
-        "google",
-        "google-vertex",
-        "amazon-bedrock",
-        "azure",
-        "openrouter",
-        "lmstudio",
-        "deepseek",
-        "groq",
-        "mistral",
-        "togetherai",
-        "fireworks",
-        "xai",
-        "perplexity",
-        "cohere",
-        "cerebras",
-        "deepinfra",
-        "huggingface",
-        "ollama",
-        "github-copilot",
-        "github-models",
-        "requesty",
-        "v0",
-        "inception",
-        "morph",
-        "upstage",
-        "baseten",
-        "nebius",
-        "sambanova",
-        "alibaba",
-        "openai-compatible",
-        "llama",
-    }
-)
-
-
-# --------------------------------------------------------------------------- #
-# OpenCodeRuntime — Runtime protocol adapter for OpenCode CLI
+# OpenCodeProvider — Provider protocol adapter for OpenCode CLI
 # --------------------------------------------------------------------------- #
 
 
-class OpenCodeRuntime:
+class OpenCodeProvider:
     name = "opencode"
-    providers = OPENCODE_PROVIDERS
 
     def run(
         self,
@@ -84,9 +39,10 @@ class OpenCodeRuntime:
         log_path: str | Path,
         timeout: int,
     ) -> RunResult:
+        stripped_model = model.split("/", 1)[1] if "/" in model else model
         return _run_opencode(
             agent=agent,
-            model=model,
+            model=stripped_model,
             message=message,
             cwd=cwd,
             log_path=log_path,
@@ -109,13 +65,13 @@ class OpenCodeRuntime:
             for raw in proc.stdout.splitlines():
                 stripped = raw.strip()
                 if stripped and "/" in stripped:
-                    result.append(stripped)
+                    result.append(f"opencode/{stripped}")
             return result
         except Exception:
             return []
 
 
-register(OpenCodeRuntime())
+register(OpenCodeProvider())
 
 
 # --------------------------------------------------------------------------- #
@@ -179,22 +135,20 @@ def run_agent(
     log_path: str | Path,
     timeout: int,
 ) -> RunResult:
-    """Invoke an agent headlessly in `cwd`. The runtime is resolved from the
+    """Invoke an agent headlessly in `cwd`. The provider is resolved from the
     registry by provider segment (first path component of `model`). Never raises
     on failure — inspect RunResult.ok / .error / .timed_out."""
-    rt_entry = runtime_for_model(model)
-    if rt_entry is None:
+    prov_entry = provider_for_model(model)
+    if prov_entry is None:
         provider = model.split("/", 1)[0]
-        known = "; ".join(
-            f"{r.name}: {sorted(r.providers)}" for r in dict.fromkeys(_REGISTRY.values())
-        )
+        known = ", ".join(sorted(p.name for p in providers())) or "(none)"
         return RunResult(
             returncode=2,
-            error=f"unknown provider {provider!r} in tier {model!r}: no runtime registered (known runtimes — {known})",
+            error=f"unknown provider {provider!r} in tier {model!r}: no provider registered (known providers — {known})",
             timed_out=False,
             log_path=str(log_path),
         )
-    return rt_entry.run(
+    return prov_entry.run(
         agent=agent,
         model=model,
         message=message,

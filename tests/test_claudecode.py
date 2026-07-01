@@ -1,4 +1,4 @@
-"""Acceptance tests for director.claudecode (headless Claude Code runtime).
+"""Acceptance tests for director.claudecode (headless Claude Code provider).
 
 These tests exercise the parsing/aggregation logic and the command-building /
 subprocess-driving logic of `director.claudecode` in isolation. No real `claude`
@@ -593,8 +593,8 @@ class TestRunClaudeDelegatesToProc(unittest.TestCase):
             )
             self.assertIsNotNone(factory.last_env)
             # popen_tree is handed _CLEAN_ENV verbatim (the same object claudecode
-            # imports from director.runtime).
-            from director.runtime import _CLEAN_ENV
+            # imports from director.provider).
+            from director.provider import _CLEAN_ENV
 
             self.assertIs(factory.last_env, _CLEAN_ENV)
             # PYTHONDONTWRITEBYTECODE is popped; byproducts handled by the gate's ignore matcher

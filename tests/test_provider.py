@@ -1,10 +1,10 @@
-"""Acceptance tests for director.runtime — shared runtime primitives + registry.
+"""Acceptance tests for director.provider — shared provider primitives + registry.
 
 These tests cover: _CLEAN_ENV, RunResult (dataclass + .ok property + safe defaults),
-Runtime (Protocol members + conformance), and the _REGISTRY/_register/resolve/
-runtime_for_model API. No real CLIs, network, or external state is touched.
+Provider (Protocol members + conformance), and the _REGISTRY/_register/resolve/
+provider_for_model API. No real CLIs, network, or external state is touched.
 
-Run: python3 -m unittest discover -s tests -p test_runtime.py -q
+Run: python3 -m unittest discover -s tests -p test_provider.py -q
 """
 
 import importlib
@@ -19,27 +19,37 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import contextlib
 
-import director.runtime as rt  # noqa: E402
+import director.provider as rt  # noqa: E402
 
 # --------------------------------------------------------------------------- #
 # helpers
 # --------------------------------------------------------------------------- #
 
 
+def tearDownModule():
+    """Restore built-in provider modules after tests that reload director.provider."""
+    importlib.reload(rt)
+    import director.claudecode as cc
+    import director.opencode as oc
+
+    importlib.reload(cc)
+    importlib.reload(oc)
+
+
 def _fresh():
-    """Reload director.runtime to get a pristine _REGISTRY (empty dict)."""
+    """Reload director.provider to get a pristine _REGISTRY (empty dict)."""
     importlib.reload(rt)
     return rt
 
 
-def _make_rt(name, providers):
-    """Build a minimal conforming Runtime object for registry tests."""
+def _make_rt(name, providers=None):
+    """Build a minimal conforming Provider object for registry tests."""
 
-    class _FakeRuntime:
+    class _FakeProvider:
         pass
 
-    _FakeRuntime.name = name
-    _FakeRuntime.providers = frozenset(providers)
+    provider_names = list(providers or [name])
+    _FakeProvider.name = provider_names[0]
 
     def run(self, *, agent, model, message, cwd, log_path, timeout):
         return rt.RunResult(returncode=0)
@@ -47,9 +57,9 @@ def _make_rt(name, providers):
     def system_prompt_for(self, agent):
         return None
 
-    _FakeRuntime.run = run
-    _FakeRuntime.system_prompt_for = system_prompt_for
-    return _FakeRuntime()
+    _FakeProvider.run = run
+    _FakeProvider.system_prompt_for = system_prompt_for
+    return _FakeProvider()
 
 
 # --------------------------------------------------------------------------- #
@@ -59,40 +69,40 @@ def _make_rt(name, providers):
 
 class TestModuleSurface(unittest.TestCase):
     def test_module_importable(self):
-        import director.runtime  # noqa: F401
+        import director.provider  # noqa: F401
 
     def test_no_director_package_imports(self):
-        """director.runtime MUST NOT import from the director package."""
+        """director.provider MUST NOT import from the director package."""
         import ast
 
-        src = pathlib.Path(__file__).resolve().parent.parent / "director" / "runtime.py"
+        src = pathlib.Path(__file__).resolve().parent.parent / "director" / "provider.py"
         tree = ast.parse(src.read_text())
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.module:
                 self.assertFalse(
                     node.module.startswith("director"),
-                    f"director.runtime imports from director.*: found 'from {node.module} import ...'",
+                    f"director.provider imports from director.*: found 'from {node.module} import ...'",
                 )
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     self.assertFalse(
                         alias.name.startswith("director"),
-                        f"director.runtime imports director.*: found 'import {alias.name}'",
+                        f"director.provider imports director.*: found 'import {alias.name}'",
                     )
 
     def test_exports_required_names(self):
         for name in (
             "_CLEAN_ENV",
             "RunResult",
-            "Runtime",
+            "Provider",
             "_REGISTRY",
             "register",
             "resolve",
-            "runtime_for_model",
+            "provider_for_model",
         ):
             self.assertTrue(
                 hasattr(rt, name),
-                f"director.runtime is missing expected name: {name}",
+                f"director.provider is missing expected name: {name}",
             )
 
 
@@ -257,7 +267,7 @@ class TestRunResultOkProperty(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# Runtime Protocol
+# Provider Protocol
 # --------------------------------------------------------------------------- #
 
 
@@ -265,32 +275,32 @@ class TestRuntimeProtocol(unittest.TestCase):
     def test_is_protocol(self):
         # typing.is_protocol is available in Python 3.12+; fall back for older
         if hasattr(typing, "is_protocol"):
-            self.assertTrue(typing.is_protocol(rt.Runtime))
+            self.assertTrue(typing.is_protocol(rt.Provider))
         else:
-            self.assertTrue(getattr(rt.Runtime, "_is_protocol", False))
+            self.assertTrue(getattr(rt.Provider, "_is_protocol", False))
 
     def test_protocol_declares_name_annotation(self):
-        ann = rt.Runtime.__annotations__
+        ann = rt.Provider.__annotations__
         self.assertIn("name", ann)
 
-    def test_protocol_declares_providers_annotation(self):
-        ann = rt.Runtime.__annotations__
-        self.assertIn("providers", ann)
+    def test_protocol_does_not_declare_providers_annotation(self):
+        ann = rt.Provider.__annotations__
+        self.assertNotIn("providers", ann)
 
     def test_protocol_has_run_callable(self):
-        self.assertTrue(callable(getattr(rt.Runtime, "run", None)))
+        self.assertTrue(callable(getattr(rt.Provider, "run", None)))
 
     def test_protocol_has_system_prompt_for_callable(self):
-        self.assertTrue(callable(getattr(rt.Runtime, "system_prompt_for", None)))
+        self.assertTrue(callable(getattr(rt.Provider, "system_prompt_for", None)))
 
     def test_run_signature_has_all_required_kwargs(self):
-        sig = inspect.signature(rt.Runtime.run)
+        sig = inspect.signature(rt.Provider.run)
         params = set(sig.parameters.keys()) - {"self"}
         for required in ("agent", "model", "message", "cwd", "log_path", "timeout"):
-            self.assertIn(required, params, f"Runtime.run is missing kwarg: {required!r}")
+            self.assertIn(required, params, f"Provider.run is missing kwarg: {required!r}")
 
     def test_system_prompt_for_signature_has_agent_param(self):
-        sig = inspect.signature(rt.Runtime.system_prompt_for)
+        sig = inspect.signature(rt.Provider.system_prompt_for)
         self.assertIn("agent", sig.parameters)
 
 
@@ -324,13 +334,13 @@ class TestRegister(unittest.TestCase):
         self.assertIn("myprov", rt._REGISTRY)
         self.assertIs(rt._REGISTRY["myprov"], fake)
 
-    def test_register_multiple_providers(self):
+    def test_register_uses_provider_name_only(self):
         fake = _make_rt("multi", ["provA", "provB"])
         rt.register(fake)
         self.assertIs(rt._REGISTRY.get("provA"), fake)
-        self.assertIs(rt._REGISTRY.get("provB"), fake)
+        self.assertNotIn("provB", rt._REGISTRY)
 
-    def test_register_two_non_overlapping_runtimes(self):
+    def test_register_two_non_overlapping_providers(self):
         rt1 = _make_rt("rt1", ["p1"])
         rt2 = _make_rt("rt2", ["p2"])
         rt.register(rt1)
@@ -353,15 +363,14 @@ class TestRegister(unittest.TestCase):
             rt.register(rt2)
         self.assertIn("collision-key", str(ctx.exception))
 
-    def test_collision_error_names_both_runtimes(self):
-        rt1 = _make_rt("runtime-alpha", ["collide"])
-        rt2 = _make_rt("runtime-beta", ["collide"])
+    def test_collision_error_names_the_provider_key(self):
+        rt1 = _make_rt("provider-alpha", ["collide"])
+        rt2 = _make_rt("provider-beta", ["collide"])
         rt.register(rt1)
         with self.assertRaises(ValueError) as ctx:
             rt.register(rt2)
         msg = str(ctx.exception)
-        self.assertIn("runtime-alpha", msg)
-        self.assertIn("runtime-beta", msg)
+        self.assertIn("collide", msg)
 
     def test_collision_does_not_overwrite_original(self):
         rt1 = _make_rt("original", ["overlap"])
@@ -371,19 +380,11 @@ class TestRegister(unittest.TestCase):
             rt.register(rt2)
         self.assertIs(rt._REGISTRY["overlap"], rt1)
 
-    def test_check_before_insert(self):
-        """Collision check happens BEFORE any insert for that provider."""
-        rt1 = _make_rt("rt1", ["existing"])
-        rt.register(rt1)
-        # rt2 claims "existing" (collision) and "new-one"
-        # "new-one" must not end up in registry if "existing" collides first
-        # (iteration order of frozenset is not guaranteed, so we only verify
-        # that the original entry is intact; we cannot require pB to be absent)
-        rt2 = _make_rt("rt2", ["existing", "new-one"])
-        with contextlib.suppress(ValueError):
-            rt.register(rt2)
-        # The colliding entry must not be overwritten
-        self.assertIs(rt._REGISTRY.get("existing"), rt1)
+    def test_register_does_not_read_legacy_providers_set(self):
+        fake = _make_rt("rt2", ["existing", "new-one"])
+        rt.register(fake)
+        self.assertIs(rt._REGISTRY.get("existing"), fake)
+        self.assertNotIn("new-one", rt._REGISTRY)
 
 
 # --------------------------------------------------------------------------- #
@@ -395,7 +396,7 @@ class TestResolve(unittest.TestCase):
     def setUp(self):
         _fresh()
 
-    def test_resolve_returns_registered_runtime(self):
+    def test_resolve_returns_registered_provider(self):
         fake = _make_rt("fake", ["myprov"])
         rt.register(fake)
         self.assertIs(rt.resolve("myprov"), fake)
@@ -419,7 +420,7 @@ class TestResolve(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# runtime_for_model()
+# provider_for_model()
 # --------------------------------------------------------------------------- #
 
 
@@ -430,42 +431,43 @@ class TestRuntimeForModel(unittest.TestCase):
     def test_provider_slash_model_routes_correctly(self):
         fake = _make_rt("fake", ["myprovider"])
         rt.register(fake)
-        self.assertIs(rt.runtime_for_model("myprovider/mymodel"), fake)
+        self.assertIs(rt.provider_for_model("myprovider/mymodel"), fake)
 
     def test_bare_model_no_slash_uses_whole_string_as_provider(self):
         fake = _make_rt("fake", ["baremodel"])
         rt.register(fake)
-        self.assertIs(rt.runtime_for_model("baremodel"), fake)
+        self.assertIs(rt.provider_for_model("baremodel"), fake)
 
     def test_only_first_segment_matters(self):
         fake = _make_rt("fake", ["provider"])
         rt.register(fake)
-        self.assertIs(rt.runtime_for_model("provider/vendor/modelname"), fake)
+        self.assertIs(rt.provider_for_model("provider/vendor/modelname"), fake)
 
     def test_unknown_provider_returns_none(self):
-        self.assertIsNone(rt.runtime_for_model("unknown/model"))
+        self.assertIsNone(rt.provider_for_model("unknown/model"))
 
     def test_unknown_bare_string_returns_none(self):
-        self.assertIsNone(rt.runtime_for_model("noprovider"))
+        self.assertIsNone(rt.provider_for_model("noprovider"))
 
-    def test_different_providers_route_to_different_runtimes(self):
+    def test_different_providers_route_to_different_providers(self):
         rt1 = _make_rt("rt1", ["prov1"])
         rt2 = _make_rt("rt2", ["prov2"])
         rt.register(rt1)
         rt.register(rt2)
-        self.assertIs(rt.runtime_for_model("prov1/model"), rt1)
-        self.assertIs(rt.runtime_for_model("prov2/model"), rt2)
+        self.assertIs(rt.provider_for_model("prov1/model"), rt1)
+        self.assertIs(rt.provider_for_model("prov2/model"), rt2)
 
     def test_opencode_style_model_string(self):
-        fake = _make_rt("oc", ["lmstudio"])
+        fake = _make_rt("oc", ["opencode"])
         rt.register(fake)
-        self.assertIs(rt.runtime_for_model("lmstudio/qwen3.6-27b"), fake)
+        self.assertIs(rt.provider_for_model("opencode/lmstudio/qwen3.6-27b"), fake)
+        self.assertIsNone(rt.provider_for_model("lmstudio/qwen3.6-27b"))
 
     def test_bedrock_style_model_string(self):
-        fake = _make_rt("bedrock", ["amazon-bedrock"])
+        fake = _make_rt("bedrock", ["opencode"])
         rt.register(fake)
         self.assertIs(
-            rt.runtime_for_model("amazon-bedrock/us.anthropic.claude-opus-4-7"),
+            rt.provider_for_model("opencode/amazon-bedrock/us.anthropic.claude-opus-4-7"),
             fake,
         )
 

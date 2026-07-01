@@ -12,7 +12,7 @@ import subprocess
 from pathlib import Path
 
 from director import proc as proc_mod
-from director.runtime import _CLEAN_ENV, RunResult, register
+from director.provider import _CLEAN_ENV, RunResult, register
 
 # Best-effort list of stable `claude --model` aliases.  Not authoritative;
 # the `claude` CLI has no "list models" command.
@@ -274,13 +274,12 @@ def _collect_tool_entry(
 
 
 # --------------------------------------------------------------------------- #
-# ClaudeCodeRuntime — Runtime protocol adapter
+# ClaudeCodeProvider — Provider protocol adapter
 # --------------------------------------------------------------------------- #
 
 
-class ClaudeCodeRuntime:
+class ClaudeCodeProvider:
     name = "claude-code"
-    providers = frozenset({"claude-code"})
 
     def run(
         self,
@@ -309,4 +308,4 @@ class ClaudeCodeRuntime:
         return [f"claude-code/{m}" for m in CLAUDE_CODE_MODELS]
 
 
-register(ClaudeCodeRuntime())
+register(ClaudeCodeProvider())

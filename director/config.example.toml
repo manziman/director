@@ -16,26 +16,29 @@
 # turn it into a zero-local-infra "cheap-cloud" setup or an "all-frontier" baseline.
 
 [tiers]
-# Each role is bound to a "<provider>/<model>" string. The provider segment selects
-# the agent runtime via a registry:
-#   - "claude-code/<model>"  → Claude Code CLI (`claude`); <model> passed to
-#                              `claude --model` (e.g. "claude-code/opus")
-#   - anthropic/<model>, openai, google, lmstudio, amazon-bedrock, openrouter, …
-#     → OpenCode runtime
-# An unrecognized or unregistered provider is a configuration error and surfaces as
-# a FAILED run — there is no silent fallback.
-# Mix freely per role — e.g. a claude-code planner alongside a local-opencode executor.
+# Each role is bound to a "<provider>/<model-ref>" string. The first segment is
+# always the tool director drives:
+#   - "claude-code/<model>" → Claude Code CLI (`claude`); <model> is passed to
+#                             `claude --model` (e.g. "claude-code/opus")
+#   - "opencode/<model-ref>" → OpenCode CLI; <model-ref> is whatever
+#                              `opencode run --model` expects, e.g.
+#                              "opencode/anthropic/claude-opus-4-8",
+#                              "opencode/lmstudio/qwen3.6-27b-mtp",
+#                              "opencode/amazon-bedrock/us.anthropic.claude-opus-4-7"
+# An unrecognized or unregistered provider is a configuration error and fails fast
+# at load — there is no silent fallback.
+# Mix freely per role — e.g. a claude-code planner alongside an opencode executor.
 # Code, prompts, and logs refer ONLY to role names — never to a specific model.
-planner     = "amazon-bedrock/us.anthropic.claude-opus-4-7"   # decomposition + DAG (use your strongest model)
-test_author = "amazon-bedrock/us.anthropic.claude-opus-4-7"   # tests are the contract → strongest
-executor    = "lmstudio/qwen3.6-27b-mtp"                      # implements each node. The cheap tier.
-explorer    = "lmstudio/qwen3.6-27b-mtp"                      # read-only recon (reuse the cheap tier)
-reviewer    = "amazon-bedrock/anthropic.claude-sonnet-4-6"    # stage-two code review (NEVER the cheap/local tier)
-escalation  = "amazon-bedrock/anthropic.claude-sonnet-4-6"    # per-task fallback when the executor exhausts attempts
+planner     = "opencode/amazon-bedrock/us.anthropic.claude-opus-4-7"   # decomposition + DAG (use your strongest model)
+test_author = "opencode/amazon-bedrock/us.anthropic.claude-opus-4-7"   # tests are the contract → strongest
+executor    = "opencode/lmstudio/qwen3.6-27b-mtp"                      # implements each node. The cheap tier.
+explorer    = "opencode/lmstudio/qwen3.6-27b-mtp"                      # read-only recon (reuse the cheap tier)
+reviewer    = "opencode/amazon-bedrock/anthropic.claude-sonnet-4-6"    # stage-two code review (NEVER the cheap/local tier)
+escalation  = "opencode/amazon-bedrock/anthropic.claude-sonnet-4-6"    # per-task fallback when the executor exhausts attempts
 #
 # cheap-cloud (no local GPU): set executor/explorer to a low-cost cloud model and
 #   delete the [providers.local] block, e.g.
-#     executor = "openrouter/deepseek/deepseek-v4-pro"
+#     executor = "opencode/openrouter/deepseek/deepseek-v4-pro"
 # all-frontier baseline (expensive control): set executor = reviewer = escalation
 #   to the same frontier model as the planner.
 # Claude Code: e.g.  planner = "claude-code/opus"   (drive planning via the `claude` CLI)
@@ -69,13 +72,13 @@ typecheck = "mypy ."
 # Pricing is keyed by the same "<provider>/<model>" tier string used in [tiers].
 # Fill these from your provider's current price sheet; any model not listed here
 # is counted at $0 (cost reports read zero — not estimated — for unlisted models).
-[pricing."lmstudio/qwen3.6-27b-mtp"]
+[pricing."opencode/lmstudio/qwen3.6-27b-mtp"]
 input = 0.0
 output = 0.0
-[pricing."amazon-bedrock/us.anthropic.claude-opus-4-7"]
+[pricing."opencode/amazon-bedrock/us.anthropic.claude-opus-4-7"]
 input = 15.0
 output = 75.0
-[pricing."amazon-bedrock/anthropic.claude-sonnet-4-6"]
+[pricing."opencode/amazon-bedrock/anthropic.claude-sonnet-4-6"]
 input = 3.0
 output = 15.0
 [pricing."claude-code/opus"]

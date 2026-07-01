@@ -1,11 +1,4 @@
-"""Acceptance tests for the runtime documentation in `config.example.toml`.
-
-The new model: the provider segment of a `"<provider>/<model>"` tier string
-selects a runtime via a **registry**.  The example file's comment block must
-document this — including which providers map to which runtimes and what happens
-when an unrecognized provider is used — and must NOT contain a live `[runtime]`
-table (that design was removed).
-"""
+"""Acceptance tests for provider-tier documentation in `config.example.toml`."""
 
 import os
 import pathlib
@@ -51,9 +44,7 @@ class RuntimeConventionDocumentedTest(unittest.TestCase):
         self.assertIn("claude-code/", raw, "the claude-code/ prefix convention must be documented")
 
     def test_no_live_runtime_table(self):
-        """The old [runtime] table design was removed; only the registry remains.
-        No uncommented `[runtime]` header may appear, and the parsed TOML must
-        have no `runtime` key at the top level."""
+        """The old [runtime] table design must stay removed."""
         for line in _read_example().splitlines():
             stripped = line.strip()
             if stripped.startswith("#"):
@@ -64,60 +55,43 @@ class RuntimeConventionDocumentedTest(unittest.TestCase):
 
 
 class RegistryBasedResolutionTest(unittest.TestCase):
-    """Comments must document the new registry-based provider→runtime lookup.
-
-    Required by spec:
-    • The provider segment selects a runtime via a registry (not an implicit default).
-    • claude-code/<model>            → Claude Code CLI runtime.
-    • anthropic/<model> and other OpenCode-owned providers
-      (openai, google, lmstudio, amazon-bedrock, openrouter, …) → OpenCode.
-    • Unrecognized/unregistered provider → configuration error surfaced as a
-      FAILED run (not a silent fallback).
-    """
+    """Comments must document the provider-as-tool tier format."""
 
     def setUp(self):
         self.comments = _comment_text(_read_example())
         self.comments_lower = self.comments.lower()
 
     # ------------------------------------------------------------------
-    # Registry mechanism
+    # Provider mechanism
     # ------------------------------------------------------------------
 
-    def test_documents_registry_based_resolution(self):
-        """Comments must mention 'registry' as the provider→runtime resolution mechanism."""
+    def test_documents_first_segment_is_tool(self):
         self.assertIn(
-            "registry",
+            "first segment",
             self.comments_lower,
-            "comments must mention 'registry' to describe the provider→runtime lookup",
+            "comments must state that the first segment selects the tool/provider",
         )
+        self.assertIn("tool", self.comments_lower)
 
     # ------------------------------------------------------------------
     # Documented routes
     # ------------------------------------------------------------------
 
-    def test_documents_anthropic_provider_routes_to_opencode(self):
-        """Comments must explicitly show anthropic/<model> as an OpenCode-routed provider."""
+    def test_documents_opencode_anthropic_tier(self):
+        """Comments must show OpenCode sub-provider refs under opencode/."""
         self.assertIn(
-            "anthropic/",
+            "opencode/anthropic/",
             self.comments,
-            "comments must document 'anthropic/<model>' as routing to OpenCode",
+            "comments must document 'opencode/anthropic/<model>' tiers",
         )
 
-    def test_documents_openai_and_google_as_opencode_providers(self):
-        """Comments must list both openai and google as OpenCode-routed providers.
-
-        Note: the existing 'OpenAI-compatible endpoint' phrase does NOT satisfy this
-        — openai must appear in the provider routing docs alongside google, which is
-        currently absent entirely.
-        """
+    def test_documents_lmstudio_and_bedrock_under_opencode(self):
         lower = self.comments_lower
-        # google is entirely absent from the current file; requiring it guarantees
-        # we're testing the provider routing docs, not a false-positive substring match
-        for provider in ("openai", "google"):
+        for tier in ("opencode/lmstudio/", "opencode/amazon-bedrock/"):
             self.assertIn(
-                provider,
+                tier,
                 lower,
-                f"comments must list '{provider}' as an OpenCode-routed provider",
+                f"comments must show {tier!r} as an OpenCode tier prefix",
             )
 
     # ------------------------------------------------------------------
@@ -139,13 +113,13 @@ class RegistryBasedResolutionTest(unittest.TestCase):
         )
 
     def test_documents_no_silent_fallback_for_unknown_provider(self):
-        """Comments must say an unknown provider produces a FAILED run, not a silent fallback."""
+        """Comments must say an unknown provider fails fast, not a silent fallback."""
         lower = self.comments_lower
         mentions_failure = "failed" in lower or "fail" in lower
         mentions_not_silent = "silent" in lower or "fallback" in lower
         self.assertTrue(
             mentions_failure and mentions_not_silent,
-            "comments must state an unknown provider causes a FAILED run "
+            "comments must state an unknown provider causes a failure "
             "(not a silent fallback); need both failure + 'silent'/'fallback' language",
         )
 

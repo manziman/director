@@ -30,14 +30,14 @@ from director.config import ROLES
 
 # All six tiers pointing at an OpenCode-owned provider.
 _OPENCODE_TOML = (
-    "[tiers]\n" + "\n".join(f'{r} = "anthropic/claude-3-5-sonnet"' for r in ROLES) + "\n"
+    "[tiers]\n" + "\n".join(f'{r} = "opencode/anthropic/claude-3-5-sonnet"' for r in ROLES) + "\n"
 )
 
 _NEW_HELP_TEXT = (
     "install role agents (writes <repo>/.opencode/ only when an OpenCode provider is configured)"
 )
 _OLD_HELP_FRAGMENT = "(re)install role agents into <repo>/.opencode"
-_NEUTRAL_MSG_FRAGMENT = "No runtime-specific agent files needed"
+_NEUTRAL_MSG_FRAGMENT = "No provider-specific agent files needed"
 
 
 # ---------------------------------------------------------------------------

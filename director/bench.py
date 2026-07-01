@@ -168,7 +168,7 @@ def run_bench(
     finally:
         # restore the working branch — but NON-FATALLY: by this point every
         # profile's data is collected and summary.json is written, so a failed
-        # checkout (e.g. a target repo that committed its .director runtime files
+        # checkout (e.g. a target repo that committed generated .director files
         # before the .gitignore seed existed) must not sink the whole bench. Log
         # and leave the repo where it is rather than raising over the result.
         try:

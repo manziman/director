@@ -15,6 +15,7 @@ Run: python -m unittest tests.test_proc -v
 
 import ast
 import dataclasses
+import importlib
 import os
 import pathlib
 import subprocess
@@ -28,10 +29,16 @@ from unittest import mock
 os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from director import proc, runtime  # noqa: E402
+from director import proc, provider  # noqa: E402
 
 _PROC_SRC = pathlib.Path(__file__).resolve().parent.parent / "director" / "proc.py"
 _IS_POSIX = os.name != "nt"
+
+
+def setUpModule():
+    """Refresh proc after provider registry isolation tests reload director.provider."""
+    importlib.reload(provider)
+    importlib.reload(proc)
 
 
 # --------------------------------------------------------------------------- #
@@ -398,14 +405,14 @@ class TestModuleHygiene(unittest.TestCase):
         self.tree = ast.parse(self.src)
 
     def test_imports_clean_env_from_runtime(self):
-        self.assertIs(proc._CLEAN_ENV, runtime._CLEAN_ENV)
+        self.assertIs(proc._CLEAN_ENV, provider._CLEAN_ENV)
 
     def test_only_director_runtime_clean_env_imported(self):
         for node in ast.walk(self.tree):
             if isinstance(node, ast.ImportFrom):
                 mod = node.module or ""
                 if mod == "director" or mod.startswith("director."):
-                    self.assertEqual(mod, "director.runtime")
+                    self.assertEqual(mod, "director.provider")
                     names = {a.name for a in node.names}
                     self.assertEqual(names, {"_CLEAN_ENV"})
             if isinstance(node, ast.Import):

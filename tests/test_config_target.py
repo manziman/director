@@ -22,12 +22,12 @@ from director.config import load_file  # noqa: E402
 # Minimal valid TOML that satisfies the roles validation in load_file().
 _MINIMAL_TIERS = """
 [tiers]
-planner       = "cloud/plan"
-test_author   = "cloud/plan"
-executor      = "cloud/exec"
-explorer      = "cloud/exec"
-reviewer      = "cloud/rev"
-escalation    = "cloud/esc"
+planner       = "opencode/cloud/plan"
+test_author   = "opencode/cloud/plan"
+executor      = "opencode/cloud/exec"
+explorer      = "opencode/cloud/exec"
+reviewer      = "opencode/cloud/rev"
+escalation    = "opencode/cloud/esc"
 """
 
 
@@ -143,12 +143,12 @@ class TestTargetDoesNotBreakExistingConstruction(unittest.TestCase):
         cfg = Config(
             path=Path("/fake/config.toml"),
             tiers={
-                "planner": "cloud/plan",
-                "test_author": "cloud/plan",
-                "executor": "cloud/exec",
-                "explorer": "cloud/exec",
-                "reviewer": "cloud/rev",
-                "escalation": "cloud/esc",
+                "planner": "opencode/cloud/plan",
+                "test_author": "opencode/cloud/plan",
+                "executor": "opencode/cloud/exec",
+                "explorer": "opencode/cloud/exec",
+                "reviewer": "opencode/cloud/rev",
+                "escalation": "opencode/cloud/esc",
             },
             gates={},
             pricing={},

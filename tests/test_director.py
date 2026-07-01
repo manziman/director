@@ -45,22 +45,22 @@ def init_repo(d: Path):
     git(["commit", "-qm", "init"], d)
 
 
-def mk_config(d: Path, *, executor="local/exec", flake_runs=2) -> Config:
+def mk_config(d: Path, *, executor="opencode/local/exec", flake_runs=2) -> Config:
     """Construct a Config directly (no toml needed)."""
     return Config(
         path=d / ".director" / "config.toml",
         tiers={
-            "planner": "cloud/plan",
-            "test_author": "cloud/plan",
+            "planner": "claude-code/cloud/plan",
+            "test_author": "claude-code/cloud/plan",
             "executor": executor,
             "explorer": executor,
-            "reviewer": "cloud/rev",
-            "escalation": "cloud/esc",
+            "reviewer": "claude-code/cloud/rev",
+            "escalation": "claude-code/cloud/esc",
         },
         gates={"test": ""},
         pricing={
-            "local/exec": {"input": 0.0, "output": 0.0},
-            "cloud/plan": {"input": 3.0, "output": 15.0},
+            "opencode/local/exec": {"input": 0.0, "output": 0.0},
+            "claude-code/cloud/plan": {"input": 3.0, "output": 15.0},
         },
         limits={
             "flake_runs": flake_runs,
@@ -173,6 +173,10 @@ class RunMetricsTests(unittest.TestCase):
     """Drive the REAL run_job with a stubbed executor; assert metrics.jsonl."""
 
     def setUp(self):
+        self._saved_env = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE")}
+        self.home = Path(tempfile.mkdtemp(prefix="fm-run-home-"))
+        os.environ["HOME"] = str(self.home)
+        os.environ["USERPROFILE"] = str(self.home)
         self.tmp = Path(tempfile.mkdtemp(prefix="fm-run-"))
         init_repo(self.tmp)
         self.fdir = self.tmp / ".director"
@@ -215,12 +219,20 @@ class RunMetricsTests(unittest.TestCase):
         (self.fdir / "plan.json").write_text(json.dumps(plan))
         # a config.toml so config.load works
         (self.fdir / "config.toml").write_text(
-            '[tiers]\nplanner="c/p"\ntest_author="c/p"\nexecutor="l/e"\n'
-            'explorer="l/e"\nreviewer="c/r"\nescalation="c/e"\n'
+            '[tiers]\nplanner="claude-code/cloud/plan"\ntest_author="claude-code/cloud/plan"\n'
+            'executor="opencode/local/exec"\nexplorer="opencode/local/exec"\n'
+            'reviewer="claude-code/cloud/rev"\nescalation="claude-code/cloud/esc"\n'
             '[gates]\ntest="python3 -m unittest discover -s tests -q"\n'
             "[pricing]\n[limits]\nflake_runs=2\nnode_timeout_secs=60\nmax_attempts=2\n"
             "[review]\nstage_two=true\nstage_two_file_threshold=3\n"
         )
+
+    def tearDown(self):
+        for key, val in self._saved_env.items():
+            if val is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = val
 
     def test_run_emits_metrics_and_records_watch_it_fail(self):
         import director.run as run
@@ -288,8 +300,10 @@ class BenchOrchestrationTests(unittest.TestCase):
         (self.fdir / "profiles").mkdir(parents=True)
         for name in ("all-frontier", "cheap-cloud"):
             (self.fdir / "profiles" / f"{name}.toml").write_text(
-                f'[tiers]\nplanner="c/p"\ntest_author="c/p"\nexecutor="x/{name}"\n'
-                'explorer="x/e"\nreviewer="c/r"\nescalation="c/e"\n'
+                f'[tiers]\nplanner="claude-code/cloud/plan"\n'
+                f'test_author="claude-code/cloud/plan"\nexecutor="opencode/x/{name}"\n'
+                'explorer="opencode/x/e"\nreviewer="claude-code/cloud/rev"\n'
+                'escalation="claude-code/cloud/esc"\n'
                 "[limits]\nmax_attempts=2\n[review]\n"
             )
         (self.fdir / "config.toml").write_text("ORIGINAL\n")
@@ -336,7 +350,7 @@ class BenchOrchestrationTests(unittest.TestCase):
                 json.dumps(
                     {
                         "role": "planner",
-                        "model": "c/p",
+                        "model": "claude-code/cloud/plan",
                         "input": 1000,
                         "output": 500,
                         "cost": 0.0105,
@@ -402,7 +416,7 @@ class BenchOrchestrationTests(unittest.TestCase):
 
 class DirectorGitignoreTests(unittest.TestCase):
     """Regression for the live-bench crash: a target repo without a .gitignore
-    must not commit director's own .director runtime files via `git add -A`."""
+    must not commit director's own .director provider files via `git add -A`."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="fm-gi-"))
@@ -423,7 +437,7 @@ class DirectorGitignoreTests(unittest.TestCase):
         tracked = gitutil.git(["ls-files"], self.tmp).stdout.splitlines()
         self.assertIn(".director/.gitignore", tracked)
         self.assertIn(".director/config.toml", tracked)  # config stays tracked
-        self.assertNotIn(".director/costs.jsonl", tracked)  # runtime ignored
+        self.assertNotIn(".director/costs.jsonl", tracked)  # provider ignored
         self.assertNotIn(".director/plan.json", tracked)
         self.assertNotIn(".director/logs/a.jsonl", tracked)
 

@@ -1,7 +1,7 @@
 """Interactive `director init`: discover models, prompt for tiers/gates, render TOML.
 
 This module wires the interactive `director init` flow. It discovers available
-models by iterating registered runtimes and collecting their tier strings,
+models by iterating registered providers and collecting their tier strings,
 prompts the user to bind each role to a model (or falls back to free-text entry
 when discovery is unavailable), prompts for the deterministic gate commands,
 and renders a minimal `.director/config.toml`. The renderer is pure and its
@@ -12,7 +12,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import director.runtime as runtime
+import director.claudecode  # noqa: F401 — ensures ClaudeCodeProvider registers
+import director.opencode  # noqa: F401 — ensures OpenCodeProvider registers
+import director.provider as provider
 from director.config import ROLES, _user_config_path
 
 
@@ -38,11 +40,11 @@ def parse_models(text: str) -> list[str]:
 
 
 def discover_models() -> list[str]:
-    """Union of all registered runtimes' discover_models(), deduped in registration order."""
+    """Union of all registered providers' discover_models(), deduped in registration order."""
     seen: set[str] = set()
     result: list[str] = []
-    for rt in runtime.runtimes():
-        for tier in rt.discover_models():
+    for prov in provider.providers():
+        for tier in prov.discover_models():
             if tier not in seen:
                 seen.add(tier)
                 result.append(tier)
