@@ -1,6 +1,53 @@
 # CHANGELOG
 
 
+## v0.8.0 (2026-07-01)
+
+### Features
+
+- User-level director config overridable by repo-local config (#7)
+  ([#21](https://github.com/manziman/director/pull/21),
+  [`afd0f57`](https://github.com/manziman/director/commit/afd0f572183800227215f0d8b1f07f5ca58fd3a2))
+
+* director: scaffold agents for job 20260630-140531
+
+* director: acceptance tests for job 20260630-144342
+
+* director: node config-two-level-merge via executor
+
+* director: node init-target-selection via executor
+
+* director: node cli-init-flags via executor
+
+* director: node docs-config-example via executor
+
+* director: node docs-readme via executor
+
+* style: ruff --fix + format on director-authored nodes (import sort, combine with)
+
+Finalizes the integration lint gate for job 20260630-144342 (issue #7). Auto-fixable ruff findings
+  only: import ordering in cli.py/test files and a combined `with` in test_cli_init.py. No behavior
+  change.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* docs: fix README two-level [tiers] example to real flat schema
+
+The executor-authored example used [tiers.planner]/model sub-table syntax, but director binds each
+  role to a single "provider/model" string under a flat [tiers] table. The sub-table form would
+  deserialize tiers values as dicts and break model_for(). Corrected both example blocks; merge
+  semantics unchanged.
+
+* chore: untrack paseo.json (worktree tooling, not part of issue #7)
+
+An earlier director scaffold commit accidentally tracked this local paseo worktree config. Keep it
+  on disk but out of the deliverable.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v0.7.0 (2026-06-30)
 
 ### Features
