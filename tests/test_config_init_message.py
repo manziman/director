@@ -23,6 +23,25 @@ class LoadMissingConfigMessageTests(unittest.TestCase):
     def setUp(self):
         # A fresh temp repo with NO .director/config.toml.
         self.tmp = Path(tempfile.mkdtemp(prefix="fm-cfgmsg-"))
+        # Isolate HOME (and USERPROFILE) to an empty temp dir so no user-level
+        # ~/.director/config.toml exists either. With two-level loading, the
+        # FileNotFoundError only fires when BOTH the user and repo configs are
+        # absent — this keeps the "both absent" precondition true.
+        self._saved_home = os.environ.get("HOME")
+        self._saved_userprofile = os.environ.get("USERPROFILE")
+        self._home = Path(tempfile.mkdtemp(prefix="fm-cfgmsg-home-"))
+        os.environ["HOME"] = str(self._home)
+        os.environ["USERPROFILE"] = str(self._home)
+
+    def tearDown(self):
+        for key, val in (
+            ("HOME", self._saved_home),
+            ("USERPROFILE", self._saved_userprofile),
+        ):
+            if val is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = val
 
     def _raise(self):
         with self.assertRaises(FileNotFoundError) as ctx:
