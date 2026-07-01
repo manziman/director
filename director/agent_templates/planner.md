@@ -58,3 +58,8 @@ Hard rules:
    shallow DAG (more parallelism) over a deep chain.
 6. Keep nodes small — a focused function or a cohesive handful. Bias to MORE nodes.
 7. Use realistic `test_cmd`s for this repo's stack (from the recon summary).
+8. Each node's `test_cmd` must run ONLY that node's own test file, not the
+   full suite. For a Python unittest node, prefer a scoped command like
+   `python3 -m unittest discover -s tests -p test_<name>.py -q`.
+9. Never pipe `test_cmd` through output filters such as `tail`, `head`, or
+   `grep`. The command's exit code is the verdict, so masking it breaks gates.
