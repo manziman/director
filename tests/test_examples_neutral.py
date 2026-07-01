@@ -182,6 +182,38 @@ class PlannerTemplateNeutralityTest(unittest.TestCase):
             "planner.md must still contain the steer to use 'this repo's stack'",
         )
 
+    def test_test_cmd_must_scope_to_node_test_file(self):
+        """The planner must steer per-node gates away from the full suite."""
+        self.assertIn(
+            "ONLY that node's own test file",
+            self.text,
+            "planner.md must require each node's test_cmd to run only its own test file",
+        )
+        self.assertIn(
+            "python3 -m unittest discover -s tests -p test_<name>.py -q",
+            self.text,
+            "planner.md must show a scoped unittest discovery command using -p",
+        )
+
+    def test_test_cmd_must_not_pipe_through_output_filters(self):
+        """The planner must preserve the gate command's exit code."""
+        self.assertIn(
+            "Never pipe `test_cmd`",
+            self.text,
+            "planner.md must forbid piping test_cmd through output filters",
+        )
+        for token in ("tail", "head", "grep"):
+            self.assertIn(
+                token,
+                self.text,
+                f"planner.md must specifically mention `{token}` as a forbidden filter",
+            )
+        self.assertIn(
+            "exit code is the verdict",
+            self.text,
+            "planner.md must explain that the raw command exit code drives the gate",
+        )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
