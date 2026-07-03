@@ -39,6 +39,7 @@ spec.md
 recon.md
 costs.jsonl
 metrics.jsonl
+*.tmp
 logs/
 bench/
 worktrees/

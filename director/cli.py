@@ -1,4 +1,4 @@
-"""director CLI — plan | run | status | bench | sync-agents | init."""
+"""director CLI — plan | run | status | ui | bench | sync-agents | init."""
 
 from __future__ import annotations
 
@@ -49,6 +49,13 @@ def cmd_run(args) -> int:
 
 def cmd_status(args) -> int:
     print(status_table(args.repo))
+    return 0
+
+
+def cmd_ui(args) -> int:
+    from director.web.server import serve
+
+    serve(args.repo, host=args.host, port=args.port, open_browser=args.open, log=_log)
     return 0
 
 
@@ -146,6 +153,20 @@ def build_parser() -> argparse.ArgumentParser:
     ps = sub.add_parser("status", help="show per-node progress + cost")
     ps.add_argument("--repo", default=".")
     ps.set_defaults(func=cmd_status)
+
+    pu = sub.add_parser(
+        "ui", help="serve a live read-only web dashboard of the run DAG (reads .director/)"
+    )
+    pu.add_argument("--repo", default=".")
+    pu.add_argument("--host", default="127.0.0.1", help="bind address (default 127.0.0.1)")
+    pu.add_argument(
+        "--port",
+        type=int,
+        default=8642,
+        help="port to serve on (default 8642; 0 picks a free port)",
+    )
+    pu.add_argument("--open", action="store_true", help="open the dashboard in a browser")
+    pu.set_defaults(func=cmd_ui)
 
     pb = sub.add_parser("bench", help="run one task across profiles; diff cost/quality/wall-time")
     pb.add_argument("task", help="the task description (planned once, run per profile)")

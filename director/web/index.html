@@ -1,0 +1,339 @@
+<!doctype html>
+<!-- director ui — self-contained dashboard. No CDN, no build step: everything
+     (CSS, JS, the layered-DAG SVG renderer) is inline so the page works
+     offline/air-gapped. It only consumes /api/state and /api/logs/<node>, so
+     the renderer can be swapped without touching the server. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>director ui</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d; --fg: #e6edf3;
+    --dim: #8b949e; --accent: #388bfd;
+    --done: #2ea043; --pending: #6e7681; --running: #388bfd;
+    --escalated: #d29922; --failed: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 14px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  header { padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  header h1 { margin: 0 0 2px; font-size: 16px; font-weight: 600; }
+  header .task { color: var(--dim); white-space: nowrap; overflow: hidden;
+                 text-overflow: ellipsis; max-width: 90vw; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .chip { border: 1px solid var(--border); border-radius: 999px; padding: 2px 12px;
+          background: var(--bg); font-size: 12px; color: var(--dim); }
+  .chip b { color: var(--fg); font-weight: 600; }
+  .bar { height: 6px; background: var(--border); border-radius: 3px; margin-top: 10px;
+         overflow: hidden; display: flex; }
+  .bar div { height: 100%; }
+  #conn { float: right; font-size: 12px; color: var(--dim); }
+  #conn.err { color: var(--failed); }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 0; }
+  #graphwrap { overflow: auto; min-height: 300px; }
+  #detail { border-left: 1px solid var(--border); background: var(--panel); padding: 16px;
+            min-height: 300px; max-height: calc(100vh - 130px); overflow: auto; }
+  #detail h2 { margin: 0 0 4px; font-size: 15px; }
+  #detail .kv { display: grid; grid-template-columns: 130px 1fr; gap: 2px 10px;
+                font-size: 12.5px; margin: 10px 0; }
+  #detail .kv dt { color: var(--dim); } #detail .kv dd { margin: 0; word-break: break-all; }
+  #detail pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+                padding: 10px; white-space: pre-wrap; word-break: break-word;
+                font-size: 12px; max-height: 300px; overflow: auto; }
+  #detail .hint { color: var(--dim); }
+  button { background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+           border-radius: 6px; padding: 5px 12px; font: inherit; font-size: 12.5px;
+           cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  section.tables { padding: 16px 20px; border-top: 1px solid var(--border);
+                   display: flex; flex-wrap: wrap; gap: 32px; }
+  section.tables h3 { margin: 0 0 8px; font-size: 13px; color: var(--dim);
+                      text-transform: uppercase; letter-spacing: .06em; }
+  table { border-collapse: collapse; font-size: 12.5px; }
+  td, th { padding: 3px 14px 3px 0; text-align: left; }
+  th { color: var(--dim); font-weight: 500; }
+  td.num, th.num { text-align: right; }
+  .empty { padding: 60px 20px; text-align: center; color: var(--dim); font-size: 15px; }
+  /* DAG nodes */
+  .node rect { fill: var(--panel); stroke-width: 1.6; rx: 8; cursor: pointer; }
+  .node text { fill: var(--fg); pointer-events: none; }
+  .node .sub { fill: var(--dim); font-size: 10.5px; }
+  .node.selected rect { stroke-width: 3; }
+  .node.st-done rect { stroke: var(--done); }
+  .node.st-pending rect { stroke: var(--pending); }
+  .node.st-running rect { stroke: var(--running); animation: pulse 1.2s ease-in-out infinite; }
+  .node.st-escalated rect { stroke: var(--escalated); }
+  .node.st-failed rect { stroke: var(--failed); }
+  @keyframes pulse { 50% { stroke-opacity: .35; } }
+  .edge { fill: none; stroke: var(--border); stroke-width: 1.5; }
+  .edge.hot { stroke: var(--accent); }
+  /* planning pipeline stepper */
+  section.planning { padding: 12px 20px; border-bottom: 1px solid var(--border); }
+  .plansteps { display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+               font-size: 12px; }
+  .plansteps .sep { color: var(--dim); }
+  .step { border: 1px solid var(--border); border-radius: 6px; padding: 3px 10px;
+          color: var(--dim); }
+  .step.past { border-color: var(--done); color: var(--fg); }
+  .step.cur { border-color: var(--running); color: var(--fg); }
+  .step.cur.gatewait { border-color: var(--escalated); animation: blink 1.2s ease-in-out infinite; }
+  @keyframes blink { 50% { opacity: .45; } }
+  .gatebanner { margin-top: 10px; border: 1px solid var(--escalated); border-radius: 6px;
+                padding: 8px 12px; font-size: 12.5px; }
+  .gatebanner code { color: var(--escalated); }
+  .artbtns { margin-top: 10px; display: flex; gap: 8px; }
+  #artbox { margin: 10px 0 0; background: var(--bg); border: 1px solid var(--border);
+            border-radius: 6px; padding: 10px; white-space: pre-wrap; word-break: break-word;
+            font-size: 12px; max-height: 340px; overflow: auto; }
+  .status-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+                margin-right: 5px; vertical-align: baseline; }
+</style>
+</head>
+<body>
+<header>
+  <span id="conn">connecting…</span>
+  <h1 id="job">director ui</h1>
+  <div class="task" id="task"></div>
+  <div class="chips" id="chips"></div>
+  <div class="bar" id="bar" hidden></div>
+</header>
+<div id="content"><div class="empty">connecting…</div></div>
+
+<script>
+"use strict";
+const POLL_MS = 1500;
+const COLORS = { done: "var(--done)", pending: "var(--pending)", running: "var(--running)",
+                 escalated: "var(--escalated)", failed: "var(--failed)" };
+let data = null, lastText = "", selected = null;
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const $ = id => document.getElementById(id);
+const usd = x => "$" + Number(x || 0).toFixed(4);
+
+async function tick() {
+  try {
+    const r = await fetch("/api/state");
+    const text = await r.text();
+    $("conn").textContent = "● live"; $("conn").classList.remove("err");
+    if (text === lastText) return;      // only re-render when state changed
+    lastText = text;
+    data = JSON.parse(text);
+    render();
+  } catch (e) {
+    $("conn").textContent = "○ disconnected"; $("conn").classList.add("err");
+  }
+}
+
+function render() {
+  const planning = planningHTML();
+  if (!data.plan_present) {
+    const p = data.planning;
+    $("job").textContent = p && p.job_id ? `job ${p.job_id}  (planning)` : "director ui";
+    $("task").textContent = (p && p.task) || "";
+    $("chips").innerHTML = ""; $("bar").hidden = true;
+    $("content").innerHTML = planning ||
+      `<div class="empty">${esc(data.message || "No plan found.")}</div>`;
+    wirePlanning();
+    return;
+  }
+  renderHeader();
+  $("content").innerHTML =
+    `${planning}<main><div id="graphwrap"></div><aside id="detail"></aside></main>
+     <section class="tables" id="tables"></section>`;
+  wirePlanning();
+  renderGraph();
+  renderDetail();
+  renderTables();
+}
+
+/* Planning pipeline stepper (recon → spec → gate 1 → decompose → gate 2 → ready),
+   driven by plan_stage.json. Hidden once planning is done and the run view owns
+   the page. */
+const STEP_LABELS = { spec: "brainstorm / spec", gate_spec: "gate 1 · spec review",
+                      decompose: "decompose + author tests",
+                      gate_plan: "gate 2 · plan review", ready: "ready" };
+let openArtifact = null;
+
+function planningHTML() {
+  const p = data.planning;
+  if (!p || !p.stage || (p.stage === "ready" && data.plan_present)) return "";
+  const idx = p.stages.indexOf(p.stage);
+  const steps = p.stages.map((s, i) => {
+    let cls = i < idx ? "past" : i === idx ? "cur" : "";
+    if (s === p.stage && p.awaiting_gate) cls += " gatewait";
+    return `<span class="step ${cls}">${esc(STEP_LABELS[s] || s)}</span>`;
+  }).join(`<span class="sep">→</span>`);
+  const gate = p.awaiting_gate === "spec"
+    ? `⚠️ gate 1 paused — review <b>.director/spec.md</b> below, then run <code>director plan --continue</code>`
+    : p.awaiting_gate === "plan"
+    ? `⚠️ gate 2 paused — review the plan + failing tests, then run <code>director plan --continue</code>`
+    : null;
+  const btns = ["recon", "spec"].filter(a => p.artifacts[a] && p.artifacts[a].exists)
+    .map(a => `<button class="artbtn" data-art="${a}">view ${a}.md</button>`).join("");
+  return `<section class="planning">
+    <div class="plansteps">${steps}${p.auto ? `<span class="sep">(--auto)</span>` : ""}</div>
+    ${gate ? `<div class="gatebanner">${gate}</div>` : ""}
+    ${btns ? `<div class="artbtns">${btns}</div>` : ""}
+    <pre id="artbox" hidden></pre>
+  </section>`;
+}
+
+function wirePlanning() {
+  for (const b of document.querySelectorAll(".artbtn"))
+    b.addEventListener("click", () => showArtifact(b.dataset.art));
+  if (openArtifact) showArtifact(openArtifact);  // keep the viewer open across re-renders
+}
+
+async function showArtifact(name) {
+  const box = $("artbox");
+  if (!box) return;
+  openArtifact = name;
+  box.hidden = false; box.textContent = "loading…";
+  try {
+    const r = await fetch("/api/artifact/" + encodeURIComponent(name));
+    box.textContent = await r.text();
+  } catch (e) { box.textContent = "failed to load " + name + ": " + e; }
+}
+
+function renderHeader() {
+  const s = data.summary, by = s.by_status || {};
+  $("job").textContent = `job ${data.job_id}  (${data.job_branch})`;
+  $("task").textContent = data.task;
+  const chips = [
+    `<b>${s.done}/${s.total}</b> done`,
+    ...Object.entries(COLORS).filter(([k]) => by[k]).map(([k, c]) =>
+      `<span class="status-dot" style="background:${c}"></span><b>${by[k]}</b> ${k}`),
+    `<b>${s.stage_two_reviewed}</b> stage-two reviewed`,
+    `executor-tier <b>${s.executor_tier_pct.toFixed(0)}%</b>`,
+    `cost <b>${usd(data.cost.total)}</b>`,
+  ];
+  if (data.run && data.run.wall_secs != null)
+    chips.push(`last run wall <b>${Math.round(data.run.wall_secs)}s</b>`);
+  $("chips").innerHTML = chips.map(c => `<div class="chip">${c}</div>`).join("");
+  const bar = $("bar"); bar.hidden = false;
+  bar.innerHTML = ["done","running","escalated","failed","pending"].filter(k => by[k])
+    .map(k => `<div style="width:${100 * by[k] / s.total}%;background:${COLORS[k]}"></div>`)
+    .join("");
+}
+
+/* Layered DAG layout: columns = dependency layer (computed server-side as the
+   longest path from a root), rows = order within the layer. */
+function renderGraph() {
+  const NW = 176, NH = 52, GX = 70, GY = 22, PAD = 24;
+  const layers = new Map();
+  for (const n of data.nodes) {
+    if (!layers.has(n.layer)) layers.set(n.layer, []);
+    layers.get(n.layer).push(n);
+  }
+  const pos = new Map();
+  const nLayers = Math.max(...data.nodes.map(n => n.layer)) + 1;
+  const maxRows = Math.max(...[...layers.values()].map(l => l.length));
+  const H = PAD * 2 + maxRows * NH + (maxRows - 1) * GY;
+  for (const [li, nodes] of layers) {
+    const colH = nodes.length * NH + (nodes.length - 1) * GY;
+    nodes.forEach((n, i) => pos.set(n.id, {
+      x: PAD + li * (NW + GX),
+      y: (H - colH) / 2 + i * (NH + GY),
+    }));
+  }
+  const W = PAD * 2 + nLayers * NW + (nLayers - 1) * GX;
+
+  let edges = "";
+  for (const n of data.nodes) for (const d of n.depends_on) {
+    const a = pos.get(d), b = pos.get(n.id);
+    if (!a || !b) continue;
+    const x1 = a.x + NW, y1 = a.y + NH / 2, x2 = b.x, y2 = b.y + NH / 2;
+    const hot = selected && (n.id === selected || d === selected);
+    edges += `<path class="edge${hot ? " hot" : ""}" d="M${x1},${y1} C${x1 + GX / 2},${y1} ${x2 - GX / 2},${y2} ${x2},${y2}"/>`;
+  }
+  let boxes = "";
+  for (const n of data.nodes) {
+    const p = pos.get(n.id), st = n.state;
+    boxes += `<g class="node st-${esc(st.status)}${n.id === selected ? " selected" : ""}"
+                 data-id="${esc(n.id)}" transform="translate(${p.x},${p.y})">
+      <rect width="${NW}" height="${NH}" rx="8"/>
+      <text x="12" y="21" font-size="12.5">${esc(st.glyph)} ${esc(n.id.slice(0, 18))}</text>
+      <text x="12" y="38" class="sub">${esc(st.status)}${st.tier_used ? " · " + esc(st.tier_used) : ""}${st.attempts ? " · att " + st.attempts : ""}</text>
+    </g>`;
+  }
+  $("graphwrap").innerHTML =
+    `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${edges}${boxes}</svg>`;
+  for (const g of document.querySelectorAll(".node"))
+    g.addEventListener("click", () => { selected = g.dataset.id; renderGraph(); renderDetail(); });
+}
+
+function renderDetail() {
+  const el = $("detail");
+  const n = data.nodes.find(x => x.id === selected);
+  if (!n) { el.innerHTML = `<p class="hint">Click a node for its state, spec, and logs.</p>`; return; }
+  const s = n.state;
+  const kv = (k, v) => `<dt>${esc(k)}</dt><dd>${v}</dd>`;
+  el.innerHTML = `
+    <h2>${esc(s.glyph)} ${esc(n.id)}</h2>
+    <div class="hint">${esc(n.title)}</div>
+    <dl class="kv">
+      ${kv("status", `<span class="status-dot" style="background:${COLORS[s.status] || "var(--pending)"}"></span>${esc(s.status)}`)}
+      ${kv("attempts", s.attempts)}
+      ${kv("tier_used", esc(s.tier_used || "—"))}
+      ${kv("model_used", esc(s.model_used || "—"))}
+      ${kv("tokens", `in ${s.tokens.input ?? 0} / out ${s.tokens.output ?? 0}`)}
+      ${kv("cost", usd(s.cost_usd))}
+      ${kv("wall", `${Math.round(s.wall_secs || 0)}s`)}
+      ${kv("escalated", s.escalated)}
+      ${kv("stage-two review", s.review_stage_two)}
+      ${kv("review blocks", s.review_blocks)}
+      ${kv("watch-it-fail", esc(s.watch_it_fail || "—"))}
+      ${kv("flake failed", s.flake_failed)}
+      ${kv("difficulty", esc(n.estimated_difficulty))}
+      ${kv("depends_on", esc(n.depends_on.join(", ") || "—"))}
+    </dl>
+    ${s.review_summary ? `<h3>review</h3><pre>${esc(s.review_summary)}</pre>` : ""}
+    ${s.error ? `<h3>error</h3><pre>${esc(s.error)}</pre>` : ""}
+    <h3>spec</h3><pre>${esc(n.spec)}</pre>
+    <h3>files</h3><pre>${esc(n.files.join("\n"))}</pre>
+    <h3>test_cmd</h3><pre>${esc(n.test_cmd)}</pre>
+    ${n.tests.length ? `<h3>tests</h3><pre>${esc(n.tests.join("\n"))}</pre>` : ""}
+    <p><button id="loadlogs">Load logs</button></p>
+    <pre id="logbox" hidden></pre>`;
+  $("loadlogs").addEventListener("click", async () => {
+    const box = $("logbox"); box.hidden = false; box.textContent = "loading…";
+    try {
+      const r = await fetch("/api/logs/" + encodeURIComponent(n.id));
+      box.textContent = await r.text();
+    } catch (e) { box.textContent = "failed to load logs: " + e; }
+  });
+}
+
+function renderTables() {
+  const rows = (obj, label) => Object.entries(obj || {}).sort()
+    .map(([k, g]) => `<tr><td>${esc(k)}</td><td class="num">${g.calls}</td>
+      <td class="num">${g.input}</td><td class="num">${g.output}</td>
+      <td class="num">${usd(g.cost)}</td></tr>`).join("") ||
+    `<tr><td colspan="5" style="color:var(--dim)">no ${label} yet</td></tr>`;
+  const run = data.run;
+  $("tables").innerHTML = `
+    <div><h3>cost by role</h3>
+      <table><tr><th></th><th class="num">calls</th><th class="num">in</th><th class="num">out</th><th class="num">cost</th></tr>
+      ${rows(data.cost.by_role, "cost entries")}</table></div>
+    <div><h3>cost by model</h3>
+      <table><tr><th></th><th class="num">calls</th><th class="num">in</th><th class="num">out</th><th class="num">cost</th></tr>
+      ${rows(data.cost.by_model, "cost entries")}</table></div>
+    <div><h3>run metrics</h3>
+      ${run ? `<table>
+        <tr><td>escalation rate</td><td class="num">${esc(run.escalation_rate)}%</td></tr>
+        <tr><td>stage-two trigger rate</td><td class="num">${esc(run.stage_two_trigger_rate)}%</td></tr>
+        <tr><td>executor-tier completion</td><td class="num">${esc(run.executor_tier_pct)}%</td></tr>
+        <tr><td>integration gate</td><td class="num">${run.integration_ok ? "PASS" : "FAIL"}</td></tr>
+        <tr><td>wall time</td><td class="num">${Math.round(run.wall_secs || 0)}s</td></tr>
+        <tr><td>total cost</td><td class="num">${usd(run.cost_total)}</td></tr>
+      </table>` : `<span style="color:var(--dim)">no completed run yet</span>`}</div>`;
+}
+
+tick();
+setInterval(tick, POLL_MS);
+</script>
+</body>
+</html>
