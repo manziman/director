@@ -1,6 +1,86 @@
 # CHANGELOG
 
 
+## v0.9.0 (2026-07-03)
+
+### Features
+
+- Add Codex provider (#6) + fix 0.8.1 wheel packaging
+  ([#27](https://github.com/manziman/director/pull/27),
+  [`01bbc70`](https://github.com/manziman/director/commit/01bbc706ed73f0f4f7f4eea84be4a17fecf4ec41))
+
+* fix: ship agent_templates package data despite json ignore pattern
+
+The blanket `*.json` gitignore added in #26 also matched director/agent_templates/opencode.json —
+  hatchling honors VCS ignore patterns when selecting build contents, so the 0.8.1 wheel shipped
+  without the template and `director plan`/`sync-agents` crashed with FileNotFoundError at first
+  use.
+
+Fix on both layers: - .gitignore: negate the pattern for director/agent_templates/*.json -
+  pyproject: [tool.hatch.build] artifacts force-includes the templates regardless of ignore rules
+
+tests/test_packaging.py pins the invariant (git check-ignore matches no tracked template; artifacts
+  covers the templates dir).
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+* feat: add Codex agent provider (#6)
+
+Squash of the director job 20260701-155321 node commits (acceptance tests + codex-module,
+  dispatch-registration-wiring, config-validation-wiring, docs-config-example, docs-readme):
+
+- director/codex.py: run_codex + _parse_codex + self-registering CodexProvider (name "codex"),
+  mirroring director/claudecode.py - registration wiring in opencode.py, init.py, and
+  config._ensure_builtin_providers_registered so codex/... tiers and pricing keys validate -
+  tier-prefix docs in config.example.toml and README - tests: test_codex.py, test_codex_dispatch.py,
+  plus dispatch/config validation coverage
+
+* fix: align codex provider with the real codex exec --json contract
+
+The generated provider was written against an assumed output format and a bare `codex exec`
+  invocation. Verified against codex-cli 0.139:
+
+- run_codex now passes --json (structured JSONL; without it stdout is human text and the parser
+  degrades to raw-text with no telemetry), --dangerously-bypass-approvals-and-sandbox (codex
+  sandboxes by default, which blocks file edits; mirrors claude's --dangerously-skip-permissions —
+  director already isolates runs in disposable worktrees), and --skip-git-repo-check. - _parse_codex
+  now reads the real event shapes: item.completed (agent_message text,
+  command_execution/file_change/... tool items), turn.completed usage
+  (input/cached_input/output/reasoning_output tokens), error, and turn.failed. Codex emits no cost
+  events; cost_reported stays 0.0 and pricing config handles dollars. - CODEX_MODELS lists verified
+  aliases (gpt-5.5; gpt-5-codex is API-key-only) and its test no longer pins exact contents. -
+  test_codex.py fixtures rewritten to the real contract; command test asserts --json and the
+  sandbox-bypass flag.
+
+Integration-gate fixes from the director run:
+
+- Every test module that reloads director.provider now also reloads director.codex (and test_codex
+  gained the same defensive setUpModule its siblings have) — otherwise stale _CLEAN_ENV/RunResult
+  bindings break cross-module identity assertions in full-suite runs. - SIM108 ternary in run_codex;
+  ruff format across the new files.
+
+Verified end-to-end: run_agent(model="codex/gpt-5.5") against the real CLI writes files, returns
+  parsed text/tokens/tool_calls, rc 0.
+
+---------
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+### Refactoring
+
+- Remove unused local provider config ([#28](https://github.com/manziman/director/pull/28),
+  [`fb084d0`](https://github.com/manziman/director/commit/fb084d00ff57b8ce7e5a8ddc07818b6fef7f9ccd))
+
+The [providers.local] config was loaded into Config.local but never consumed anywhere — local
+  OpenAI-compatible endpoints are configured through the opencode provider (e.g.
+  opencode/lmstudio/...), not through director. Drop the dead field, its loader line, the example
+  TOML block, and the test coverage for it.
+
+Closes #24 Closes #25
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+
 ## v0.8.1 (2026-07-01)
 
 ### Bug Fixes
