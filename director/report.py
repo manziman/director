@@ -16,6 +16,36 @@ _STATUS_GLYPH = {
 }
 
 
+def status_summary(plan: Plan, state: RunState) -> dict:
+    """Aggregate status counts shared by `status_table` and the web UI
+    (`director ui`), so the two views can't drift."""
+    n = len(plan.nodes)
+    by_status: dict[str, int] = {}
+    for nd in plan.nodes:
+        s = state[nd.id].status
+        by_status[s] = by_status.get(s, 0) + 1
+    done = by_status.get("done", 0)
+    esc = sum(1 for nd in plan.nodes if state[nd.id].escalated)
+    reviewed = sum(1 for nd in plan.nodes if state[nd.id].review_stage_two)
+    no_esc = done - esc
+    return {
+        "total": n,
+        "by_status": by_status,
+        "done": done,
+        "escalated": esc,
+        "stage_two_reviewed": reviewed,
+        "review_blocked": sum(1 for nd in plan.nodes if state[nd.id].review_blocks),
+        "watch_it_fail_observed": sum(
+            1 for nd in plan.nodes if state[nd.id].watch_it_fail == "observed"
+        ),
+        "flaky": sum(1 for nd in plan.nodes if state[nd.id].flake_failed),
+        "executor_tier_completion": no_esc,
+        "executor_tier_pct": (100 * no_esc / n) if n else 0.0,
+        "stage_two_trigger_pct": (100 * reviewed / n) if n else 0.0,
+        "cost_total": sum(state[nd.id].cost_usd for nd in plan.nodes),
+    }
+
+
 def status_table(repo: str) -> str:
     repo = Path(repo).resolve()
     plan_path = repo / ".director" / "plan.json"
@@ -34,32 +64,26 @@ def status_table(repo: str) -> str:
             f"{n.id[:24]:24} {glyph} {s.status:8} "
             f"{(s.tier_used or '-'):10} {s.attempts:>3} ${s.cost_usd:>7.4f}"
         )
-    done = sum(1 for n in plan.nodes if state[n.id].status == "done")
-    esc = sum(1 for n in plan.nodes if state[n.id].escalated)
-    reviewed = sum(1 for n in plan.nodes if state[n.id].review_stage_two)
-    blocked = sum(1 for n in plan.nodes if state[n.id].review_blocks)
-    wif_ok = sum(1 for n in plan.nodes if state[n.id].watch_it_fail == "observed")
-    flaky = sum(1 for n in plan.nodes if state[n.id].flake_failed)
+    m = status_summary(plan, state)
     lines += [
         "",
-        f"{done}/{len(plan.nodes)} done, {esc} escalated, "
-        f"{reviewed} stage-two reviewed, {blocked} re-opened by review",
+        f"{m['done']}/{m['total']} done, {m['escalated']} escalated, "
+        f"{m['stage_two_reviewed']} stage-two reviewed, {m['review_blocked']} re-opened by review",
     ]
-    if len(plan.nodes):
-        no_esc = done - esc
+    if m["total"]:
         lines.append(
             f"executor-tier completion (no escalation): "
-            f"{no_esc}/{len(plan.nodes)} = {100 * no_esc / len(plan.nodes):.0f}% "
+            f"{m['executor_tier_completion']}/{m['total']} = {m['executor_tier_pct']:.0f}% "
             f"(hypothesis target: >70%)"
         )
         lines.append(
             f"stage-two review trigger rate: "
-            f"{reviewed}/{len(plan.nodes)} = {100 * reviewed / len(plan.nodes):.0f}%"
+            f"{m['stage_two_reviewed']}/{m['total']} = {m['stage_two_trigger_pct']:.0f}%"
         )
         lines.append(
             f"watch-it-fail observed (red before green): "
-            f"{wif_ok}/{len(plan.nodes)}"
-            + (f"   ⚠️  {flaky} node(s) hit a flake re-run failure" if flaky else "")
+            f"{m['watch_it_fail_observed']}/{m['total']}"
+            + (f"   ⚠️  {m['flaky']} node(s) hit a flake re-run failure" if m["flaky"] else "")
         )
     return "\n".join(lines)
 

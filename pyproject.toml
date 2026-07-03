@@ -56,7 +56,7 @@ path = "director/__init__.py"
 # templates even if an ignore pattern matches them (a bare `*.json` ignore
 # shipped 0.8.1 without opencode.json).
 [tool.hatch.build]
-artifacts = ["director/agent_templates/*"]
+artifacts = ["director/agent_templates/*", "director/web/*"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["director"]

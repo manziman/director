@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict
 from pathlib import Path
 
@@ -28,13 +29,16 @@ class RunState:
         return rs
 
     def save(self) -> None:
+        # Atomic write-temp-then-replace: concurrent readers (`director ui` polls
+        # this file from another process) must never observe a truncated file.
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps(
-                {"job_id": self.job_id, "nodes": {k: asdict(v) for k, v in self.nodes.items()}},
-                indent=2,
-            )
+        payload = json.dumps(
+            {"job_id": self.job_id, "nodes": {k: asdict(v) for k, v in self.nodes.items()}},
+            indent=2,
         )
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        tmp.write_text(payload)
+        os.replace(tmp, self.path)
 
     def done_ids(self) -> set[str]:
         return {k for k, v in self.nodes.items() if v.status == DONE}

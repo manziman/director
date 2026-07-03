@@ -77,6 +77,9 @@ director run
 
 # 5. Inspect
 director status
+
+# …or watch it live in a browser (read-only dashboard, run from another terminal)
+director ui --open
 ```
 
 Unattended? Let the planner self-critique at each gate instead of pausing for you:
@@ -96,6 +99,7 @@ director run
 | `director plan "<task>" [--auto] [--no-critique] [--continue]` | Brainstorm → spec → test-gated task DAG, with two artifact-based approval gates. |
 | `director run [--parallel N] [--max-attempts K]` | Execute the DAG: each node in an isolated git worktree, gated by tests/lint/typecheck, auto-merged on pass; escalates a stuck node one tier up. |
 | `director status` | Per-node progress, attempts, cost, and the executor-tier completion rate. |
+| `director ui [--port 8642] [--host 127.0.0.1] [--open]` | Live read-only web dashboard: planning-stage progress (recon → spec → gates → ready, with recon/spec viewers), then the DAG animating as nodes run/pass/fail, with per-node detail, logs, and cost/metrics — all read from `.director/`. Localhost-only by default; `--host 0.0.0.0` exposes unauthenticated read access (specs, logs) to your network. |
 | `director bench "<task>" --profiles a,b,c` | Run the **same** task (same frozen acceptance tests) across profile variants and diff cost / quality / wall-time. |
 | `director init [--repo .]` | Interactively create `.director/config.toml` — asks which model to use per role and your gate commands. |
 | `director sync-agents` | (Re)install the role agents into `<repo>/.opencode/` (plus gitignore, starter `opencode.json`) — only when an `opencode/*` tier is configured. |
