@@ -1,6 +1,70 @@
 # CHANGELOG
 
 
+## v0.10.0 (2026-07-08)
+
+### Features
+
+- Add director auto — one-shot autonomous mode with live dashboard (#30)
+  ([#31](https://github.com/manziman/director/pull/31),
+  [`ea7c045`](https://github.com/manziman/director/commit/ea7c045c4c1f532b06d3c7b3f3506722a60a1885))
+
+`director auto` fuses plan + run behind a single unattended command and serves the read-only web
+  dashboard from the same process for the duration.
+
+- Task input: positional string, --input FILE, or --input - (stdin drained to EOF before anything
+  spawns). Explicit-but-empty input errors. - Pipeline: run_plan(auto=True, critique per
+  --no-critique) -> READY -> run_job -> run_summary, with cmd_run's exit-code semantics. - Dashboard
+  binds BEFORE planning (fail fast on a busy port) and serves from a daemon thread; --open implies
+  --hold, and --hold keeps the dashboard live inside the server's try/finally until Ctrl-C. - Resume
+  guard: a supplied task differing from plan_stage.json's recorded task errors (both named,
+  truncated to 80 chars); --force validates the new task first, then discards the five planning
+  artifacts and replans; READY + plan.json + matching/absent task skips planning entirely. -
+  --max-cost aborts at the phase boundary via CostLedger.total(). - Hardening: run_shell/popen_tree
+  now default stdin=subprocess.DEVNULL (caller kwargs still win). All provider adapters spawn via
+  popen_tree, fixing the OpenCode inherited-stdin hang (exit 124 at node_timeout) at the source —
+  `director … </dev/null` is no longer needed.
+
+Implemented by director dogfooding its own pipeline: 2 nodes planned by Opus, executed at executor
+  tier by a local Qwen3.6 27B (100% executor-tier completion, 0 escalations, $4.68 total, all
+  planning), gates reviewed by a human at both artifacts, plus a human polish commit (lint, --hold
+  serving liveness, --force delete-after-validate) with regression tests.
+
+tests: 47 new (test_cli_auto.py, test_proc_stdin.py); suite at 873 green.
+
+Closes #30
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+- Add director ui — live web dashboard for run/DAG observability (#18)
+  ([#29](https://github.com/manziman/director/pull/29),
+  [`f9a1c80`](https://github.com/manziman/director/commit/f9a1c80e8a2b5c48a40b0cd9854a78369db4ad94))
+
+`director ui` serves a localhost, read-only dashboard assembled entirely from what any runtime
+  already writes under <repo>/.director/ — no new instrumentation, no Python dependencies, no build
+  step, no vendored JS.
+
+- director/web/server.py: stdlib ThreadingHTTPServer with GET /, /api/state (merged plan + state +
+  summary + cost + latest run metrics), /api/logs/<node> (plan-id allowlisted, traversal-rejected,
+  tail-capped), /api/artifact/<recon|spec> (fixed allowlist), /api/health. Pure
+  build_state/read_node_logs/read_artifact functions keep the HTTP layer thin and unit-testable.
+  Malformed mid-write reads serve the last good snapshot. - director/web/index.html: single
+  self-contained page. Hand-rolled layered SVG DAG (layers = longest path from a root via
+  dag.topo_order), status colors/glyphs matching report._STATUS_GLYPH, 1.5 s polling that only
+  re-renders on change, per-node detail + log viewer, cost/metrics tables, and a planning-pipeline
+  stepper (recon → spec → gate 1 → decompose → gate 2 → ready) with recon/spec artifact viewers
+  driven by plan_stage.json — so the dashboard is live from `director plan` onward. -
+  report.status_summary(): shared aggregate math so status_table and the UI can't drift. -
+  RunState.save() now writes atomically (temp + os.replace), removing the partial-read race at the
+  source; .director/.gitignore gains *.tmp. - Packaging: director/web/* force-included via hatch
+  artifacts (the 0.8.1 gitignore lesson); verified present in a built wheel.
+
+Read-only by design: the UI observes .director/, never mutates it; gates are still approved via
+  `director plan --continue`. Localhost bind by default, with a warning when bound elsewhere.
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+
 ## v0.9.0 (2026-07-03)
 
 ### Features
