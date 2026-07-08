@@ -1,4 +1,4 @@
-"""director CLI — plan | run | status | ui | bench | sync-agents | init."""
+"""director CLI — plan | run | status | ui | bench | sync-agents | init | auto."""
 
 from __future__ import annotations
 
@@ -108,6 +108,111 @@ def cmd_init(args) -> int:
     return 0
 
 
+def _hold_until_interrupt() -> None:
+    """Block (leaving the dashboard serving) until Ctrl-C. Factored out so the
+    orchestration tests can stub the wait."""
+    import contextlib
+    import threading
+
+    stop = threading.Event()
+    with contextlib.suppress(KeyboardInterrupt):
+        while True:
+            stop.wait(1)
+
+
+def cmd_auto(args) -> int:
+    import threading
+    import webbrowser
+    from pathlib import Path as _Path
+
+    from director.cost import CostLedger
+    from director.plan import READY, PlanProgress, run_plan
+    from director.run import run_job
+    from director.web.server import DashboardServer
+
+    # Resolve the task text FIRST: `--input -` must drain stdin before anything
+    # can spawn a child process (children get stdin=DEVNULL — see proc.py).
+    if args.input == "-":
+        raw = sys.stdin.read()
+    elif args.input:
+        raw = _Path(args.input).read_text()
+    else:
+        raw = args.task
+    if raw is not None and not raw.strip():
+        raise ValueError("empty task input")
+    task = raw.strip() if raw is not None else None
+
+    if args.open:  # a human watching in a browser wants the dashboard to outlive the run
+        args.hold = True
+
+    repo = _Path(args.repo).resolve()
+    cfg = config.load(str(repo))
+
+    # Resume guard — before the server binds, so an invalid invocation does nothing.
+    ddir = repo / ".director"
+    progress = PlanProgress.load(repo)
+    skip_planning = False
+    if args.force:
+        if task is None:
+            raise ValueError("nothing to replan from: --force needs a task or --input")
+        for name in ("plan_stage.json", "plan.json", "spec.md", "recon.md", "state.json"):
+            (ddir / name).unlink(missing_ok=True)
+    elif progress is not None:
+        if task is not None and task != progress.task:
+            raise RuntimeError(
+                f"task mismatch: recorded '{progress.task[:80]}' but got "
+                f"'{task[:80]}'; pass --force to replan"
+            )
+        if progress.stage == READY and (ddir / "plan.json").exists():
+            skip_planning = True
+    elif task is None:
+        raise ValueError("a task is required")
+
+    # Server first: fail fast on a busy port before any tokens are spent.
+    server = DashboardServer((args.host, args.port), repo)
+    url = f"http://{args.host}:{server.server_address[1]}/"
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    _log(f"director auto: dashboard at {url}")
+    if args.open:
+        webbrowser.open(url)
+
+    rc = 0
+    try:
+        if not skip_planning:
+            result = run_plan(task, repo, cfg, _log, auto=True, critique=not args.no_critique)
+            if result.stage != READY:
+                raise RuntimeError(
+                    f"planning did not reach READY (stage={result.stage}): {result.message}"
+                )
+
+        if args.max_cost > 0:
+            total = CostLedger(ddir / "costs.jsonl").total()
+            if total > args.max_cost:
+                raise RuntimeError(
+                    f"over budget: spent ${total:.4f} exceeds --max-cost ${args.max_cost:.2f}"
+                )
+
+        run_result = run_job(
+            repo,
+            cfg,
+            parallel=args.parallel,
+            max_attempts=args.max_attempts or cfg.max_attempts,
+            log=_log,
+        )
+        print(run_summary(run_result))
+        failed = bool(run_result["failed"]) or not run_result["integration_ok"]
+        rc = 1 if failed else 0
+
+        if args.hold:  # hold INSIDE try/finally: the dashboard stays live until Ctrl-C
+            _log("director auto: run finished — dashboard held open (Ctrl-C to stop)")
+            _hold_until_interrupt()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    return rc
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="director", description=__doc__)
     p.add_argument("--version", action="version", version=f"director {__version__}")
@@ -204,6 +309,42 @@ def build_parser() -> argparse.ArgumentParser:
     mut.add_argument("--user", action="store_true")
     mut.add_argument("--local", action="store_true")
     pi.set_defaults(func=cmd_init)
+
+    pa = sub.add_parser("auto", help="one-shot autonomous plan + run with live dashboard")
+    me = pa.add_mutually_exclusive_group()
+    me.add_argument("task", nargs="?", default=None, help="the PRD/task text (or use --input)")
+    me.add_argument(
+        "--input", metavar="FILE", default=None, help="read task from FILE; use - for stdin"
+    )
+    pa.add_argument("--repo", default=".")
+    pa.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        help="max concurrent nodes (default 1)",
+    )
+    pa.add_argument(
+        "--max-attempts",
+        type=int,
+        default=0,
+        help="executor attempts before escalation (default: config)",
+    )
+    pa.add_argument("--no-critique", action="store_true")
+    pa.add_argument("--host", default="127.0.0.1")
+    pa.add_argument(
+        "--port",
+        type=int,
+        default=8642,
+    )
+    pa.add_argument("--open", action="store_true")
+    pa.add_argument("--hold", action="store_true")
+    pa.add_argument(
+        "--max-cost",
+        type=float,
+        default=0.0,
+    )
+    pa.add_argument("--force", action="store_true")
+    pa.set_defaults(func=cmd_auto)
 
     return p
 

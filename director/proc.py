@@ -65,6 +65,7 @@ def run_shell(
         argv,
         cwd=cwd,
         env=_CLEAN_ENV,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -98,7 +99,7 @@ def _popen_group_kwargs() -> dict:
 
 def popen_tree(cmd, **kwargs) -> subprocess.Popen:
     """Launch *cmd* in its own process group and return the Popen object."""
-    merged = {**kwargs, **_popen_group_kwargs()}
+    merged = {"stdin": subprocess.DEVNULL, **kwargs, **_popen_group_kwargs()}
     return subprocess.Popen(cmd, **merged)  # noqa: PLC2801
 
 
