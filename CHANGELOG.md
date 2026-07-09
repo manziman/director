@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.10.1 (2026-07-09)
+
+### Bug Fixes
+
+- Merge inherited config in sync-agents ([#34](https://github.com/manziman/director/pull/34),
+  [`83260ff`](https://github.com/manziman/director/commit/83260fff77429e49384ab160556ef53fa0efdc73))
+
+
 ## v0.10.0 (2026-07-08)
 
 ### Features
