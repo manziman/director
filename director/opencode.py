@@ -13,6 +13,7 @@ from pathlib import Path
 
 import director.claudecode  # noqa: F401 — ensures ClaudeCodeProvider registers
 import director.codex  # noqa: F401 — ensures CodexProvider registers
+import director.pi  # noqa: F401 — ensures PiProvider registers
 from director import proc as proc_mod
 from director.provider import (
     _CLEAN_ENV,

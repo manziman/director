@@ -43,9 +43,21 @@ director orchestrates other tools rather than replacing them, so it needs:
 - **[OpenCode](https://opencode.ai)** on `PATH`, if you use an `opencode/*` tier
 - **Claude Code** (`claude`) on `PATH`, if you use a `claude-code/*` tier
 - **Codex** (`codex`) on `PATH`, if you use a `codex/*` tier (e.g. `codex/gpt-5-codex`; runs via the OpenAI Codex CLI)
-- **Provider auth**: if you use OpenCode tiers, configure auth in OpenCode via `opencode auth`; Claude Code tiers use the Claude Code CLI's own auth; Codex tiers use the Codex CLI's own auth
+- **Pi** (`pi`) on `PATH`, if you use a `pi/<provider>/<model>` tier (install with `npm install -g --ignore-scripts @mariozechner/pi-coding-agent`)
+- **Provider auth**: if you use OpenCode tiers, configure auth in OpenCode via `opencode auth`; Claude Code tiers use the Claude Code CLI's own auth; Codex tiers use the Codex CLI's own auth; Pi uses its normal BYOK provider environment variables
 
 director never manages model-provider keys itself — each tool handles its own credentials.
+
+Pi tiers use the exact `pi/<provider>/<model>` form, such as
+`pi/anthropic/claude-sonnet-4-5`, `pi/openai/gpt-5.5`, or `pi/groq/<model>`.
+Director does not install Pi, store Pi credentials, discover Pi models, manage Pi
+extensions, or resume Pi sessions; v1 discovery returns no models, so configure tiers
+explicitly. Pricing can be added with `[pricing."pi/anthropic/claude-sonnet-4-5"]`.
+
+**Manual Pi smoke test (requires a real provider key; not part of automated tests):**
+install Pi, export the applicable provider credential such as `ANTHROPIC_API_KEY`, set
+`executor = "pi/anthropic/claude-sonnet-4-5"` in `.director/config.toml`, run a small
+Director command, and inspect the attempt logs under `.director/logs/`.
 
 ---
 
