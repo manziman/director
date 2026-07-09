@@ -60,6 +60,21 @@ class TestParsePi(unittest.TestCase):
             self.assertEqual(len(result.tool_events), 3)
             self.assertIn("denied", result.error or "")
 
+    def test_tool_result_error_and_retry_errors_are_diagnostics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _write(
+                tmp,
+                [
+                    {"type": "tool_execution_end", "toolName": "bash", "result": {"error": "denied"}},
+                    {"type": "auto_retry_end", "success": False, "finalError": "retry exhausted"},
+                    {"type": "extension_error", "message": "extension broke"},
+                ],
+            )
+            result = pi._parse_pi(path, 0, False)
+            self.assertEqual(result.tool_calls, [("bash", "failed")])
+            for diagnostic in ("denied", "retry exhausted", "extension broke"):
+                self.assertIn(diagnostic, result.error or "")
+
     def test_usage_variants_and_cost_are_numeric_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = _write(
@@ -82,6 +97,21 @@ class TestParsePi(unittest.TestCase):
             )
             result = pi._parse_pi(path, 0, False)
             self.assertEqual(result.tokens, {"input": 12, "output": 8, "reasoning": 0, "cache_read": 2, "cache_write": 1, "total": 20})
+            self.assertEqual(result.cost_reported, 0.25)
+
+    def test_overlapping_event_costs_are_not_double_counted(self):
+        usage = {"input": 2, "output": 1, "totalTokens": 3, "cost": {"total": 0.25}}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _write(
+                tmp,
+                [
+                    {"type": "message_end", "message": {"role": "assistant", "usage": usage}},
+                    {"type": "turn_end", "message": {"role": "assistant", "usage": usage}},
+                    {"type": "agent_end", "messages": [{"role": "assistant", "usage": usage}]},
+                ],
+            )
+            result = pi._parse_pi(path, 0, False)
+            self.assertEqual(result.tokens["total"], 3)
             self.assertEqual(result.cost_reported, 0.25)
 
     def test_plain_output_and_nonzero_exit_diagnostic(self):

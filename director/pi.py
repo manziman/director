@@ -21,7 +21,9 @@ _TEXT_BLOCK_TYPES = frozenset({"text", "output_text", "input_text"})
 _TOOL_EVENT_TYPES = frozenset(
     {"tool_execution_start", "tool_execution_update", "tool_execution_end"}
 )
-_ERROR_EVENT_TYPES = frozenset({"error", "turn_error", "agent_error"})
+_ERROR_EVENT_TYPES = frozenset(
+    {"error", "turn_error", "turn_failed", "agent_error", "extension_error"}
+)
 
 
 def run_pi(
@@ -116,7 +118,7 @@ def _usage(value: Any) -> dict[str, int | float]:
             "cacheWriteTokens",
             "cache_write_tokens",
         ),
-        "total": ("total", "totalTokens", "total_tokens"),
+        "total": ("totalTokens", "total_tokens", "total_token_count", "total_token_counts"),
     }
     result: dict[str, int | float] = {}
     for key, names in fields.items():
@@ -230,8 +232,11 @@ def _parse_pi(log_path: Path, rc: int, timed_out: bool) -> RunResult:
     tool_errors: list[str] = []
     diagnostics: list[str] = []
     usage_records: list[dict] = []
-    fallback_usage: list[dict] = []
-    cost_reported = 0.0
+    agent_usage: list[dict] = []
+    message_usage: list[dict] = []
+    agent_costs: list[float] = []
+    message_costs: list[float] = []
+    turn_costs: list[float] = []
 
     for record in records:
         event_type = record.get("type")
@@ -260,21 +265,27 @@ def _parse_pi(log_path: Path, rc: int, timed_out: bool) -> RunResult:
                         break
             usage = _usage(record)
             if usage:
-                fallback_usage.append(usage)
-            cost_reported += _cost(record)
+                agent_usage.append(usage)
+            cost = _cost(record)
+            if cost:
+                agent_costs.append(cost)
         elif event_type == "message_end":
             text = _message_text(record.get("message"))
             if text:
                 message_text = text
             usage = _usage(record)
             if usage:
-                fallback_usage.append(usage)
-            cost_reported += _cost(record)
+                message_usage.append(usage)
+            cost = _cost(record)
+            if cost:
+                message_costs.append(cost)
         elif event_type == "turn_end":
             usage = _usage(record)
             if usage:
                 usage_records.append(usage)
-            cost_reported += _cost(record)
+            cost = _cost(record)
+            if cost:
+                turn_costs.append(cost)
         elif event_type == "tool_execution_start":
             name = str(record.get("toolName", "tool"))
             tool_events.append(_tool_event(record, name, "started"))
@@ -283,20 +294,24 @@ def _parse_pi(log_path: Path, rc: int, timed_out: bool) -> RunResult:
             tool_events.append(_tool_event(record, name, "updated"))
         elif event_type == "tool_execution_end":
             name = str(record.get("toolName", "tool"))
-            failed = bool(record.get("isError"))
+            result = record.get("result")
+            result_has_error = isinstance(result, dict) and any(
+                key in result for key in ("error", "errorMessage", "isError")
+            )
+            failed = bool(record.get("isError")) or bool(record.get("errorMessage")) or result_has_error
             status = "failed" if failed else "completed"
             tool_calls.append((name, status))
             tool_events.append(_tool_event(record, name, status))
             if failed:
-                diagnostic = _tool_result_text(record.get("result")) or f"tool {name} failed"
+                diagnostic = _tool_result_text(result) or f"tool {name} failed"
                 tool_errors.append(diagnostic)
-        elif event_type in _ERROR_EVENT_TYPES | {"auto_retry_start", "compaction_end"}:
+        elif event_type in _ERROR_EVENT_TYPES | {"auto_retry_start", "auto_retry_end", "compaction_end"}:
             diagnostic = _diagnostic(record)
             if diagnostic:
                 diagnostics.append(diagnostic)
 
     tokens = {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "cache_write": 0, "total": 0}
-    selected_usage = usage_records or fallback_usage
+    selected_usage = usage_records or agent_usage or message_usage
     for usage in selected_usage:
         for key in ("input", "output", "cache_read", "cache_write"):
             value = usage.get(key)
@@ -307,6 +322,13 @@ def _parse_pi(log_path: Path, rc: int, timed_out: bool) -> RunResult:
             tokens["total"] += int(total)
     if tokens["total"] == 0:
         tokens["total"] = tokens["input"] + tokens["output"]
+
+    if agent_costs:
+        cost_reported = agent_costs[-1]
+    elif turn_costs:
+        cost_reported = sum(turn_costs)
+    else:
+        cost_reported = message_costs[-1] if message_costs else 0.0
 
     text = agent_text or message_text
     if not records and raw.strip():
