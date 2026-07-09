@@ -80,7 +80,7 @@ def sync_agents(repo: str | Path, cfg: Config | None = None) -> list[str]:
         toml_path = repo / ".director" / "config.toml"
         if toml_path.exists():
             try:
-                loaded = config.load_file(toml_path)
+                loaded = config.load(repo)
                 selected = _opencode_selected(loaded.tiers)
             except Exception:
                 selected = False

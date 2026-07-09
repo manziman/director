@@ -15,11 +15,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from director import setup
+from director import config, setup
 from director.config import ROLES, Config
 from director.setup import AGENT_FILES
 
@@ -32,6 +33,17 @@ _CLAUDECODE_TOML = "[tiers]\n" + "\n".join(f'{r} = "claude-code/sonnet"' for r i
 
 # A TOML that is missing most required roles — load_file raises ValueError.
 _INCOMPLETE_TOML = '[tiers]\nplanner = "opencode/anthropic/claude-3-5-sonnet"\n'
+
+# Repo-local configs may override only some roles; the others come from the
+# user-level config via config.load's two-level deep merge.
+_PARTIAL_REPO_TOML = (
+    "[tiers]\n"
+    + "\n".join(
+        f'{role} = "claude-code/sonnet"'
+        for role in ("planner", "test_author", "reviewer", "escalation")
+    )
+    + "\n"
+)
 
 # A TOML that is syntactically invalid.
 _MALFORMED_TOML = "this is not TOML }{\n"
@@ -178,6 +190,12 @@ class OnDiskConfigTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="fm-cond-disk-"))
         (self.tmp / ".director").mkdir(parents=True)
+        self.user_config = self.tmp / "user" / ".director" / "config.toml"
+        self.user_config_patch = mock.patch.object(
+            config, "_user_config_path", return_value=self.user_config
+        )
+        self.user_config_patch.start()
+        self.addCleanup(self.user_config_patch.stop)
 
     def test_opencode_toml_triggers_full_sync(self):
         (self.tmp / ".director" / "config.toml").write_text(_OPENCODE_TOML)
@@ -228,6 +246,16 @@ class OnDiskConfigTests(unittest.TestCase):
         (self.tmp / ".director" / "config.toml").write_text(_INCOMPLETE_TOML)
         setup.sync_agents(self.tmp)
         self.assertFalse((self.tmp / ".opencode").exists())
+
+    def test_partial_repo_config_inherits_opencode_tiers_from_user_config(self):
+        self.user_config.parent.mkdir(parents=True)
+        self.user_config.write_text(_OPENCODE_TOML)
+        (self.tmp / ".director" / "config.toml").write_text(_PARTIAL_REPO_TOML)
+
+        written = setup.sync_agents(self.tmp)
+
+        self.assertGreater(len(written), 0)
+        self.assertTrue((self.tmp / ".opencode" / "agents").is_dir())
 
 
 class MixedTiersTests(unittest.TestCase):
