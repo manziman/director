@@ -43,7 +43,7 @@ director orchestrates other tools rather than replacing them, so it needs:
 - **[OpenCode](https://opencode.ai)** on `PATH`, if you use an `opencode/*` tier
 - **Claude Code** (`claude`) on `PATH`, if you use a `claude-code/*` tier
 - **Codex** (`codex`) on `PATH`, if you use a `codex/*` tier (e.g. `codex/gpt-5-codex`; runs via the OpenAI Codex CLI)
-- **Pi** (`pi`) on `PATH`, if you use a `pi/<provider>/<model>` tier (install with `npm install -g --ignore-scripts @mariozechner/pi-coding-agent`)
+- **Pi** (`pi`) on `PATH`, if you use a `pi/<provider>/<model>` tier (install with `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`)
 - **Provider auth**: if you use OpenCode tiers, configure auth in OpenCode via `opencode auth`; Claude Code tiers use the Claude Code CLI's own auth; Codex tiers use the Codex CLI's own auth; Pi uses its normal BYOK provider environment variables
 
 director never manages model-provider keys itself — each tool handles its own credentials.

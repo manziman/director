@@ -19,7 +19,7 @@ class TestPiDocs(unittest.TestCase):
     def test_readme_documents_install_auth_and_manual_smoke(self):
         text = (ROOT / "README.md").read_text()
         for expected in (
-            "npm install -g --ignore-scripts @mariozechner/pi-coding-agent",
+            "npm install -g --ignore-scripts @earendil-works/pi-coding-agent",
             "BYOK",
             "Manual Pi smoke test",
             ".director/logs/",

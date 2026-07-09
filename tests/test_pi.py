@@ -75,6 +75,30 @@ class TestParsePi(unittest.TestCase):
             for diagnostic in ("denied", "retry exhausted", "extension broke"):
                 self.assertIn(diagnostic, result.error or "")
 
+    def test_false_tool_error_flag_is_not_a_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _write(
+                tmp,
+                [{"type": "tool_execution_end", "toolName": "bash", "result": {"isError": False, "text": "ok"}}],
+            )
+            result = pi._parse_pi(path, 0, False)
+            self.assertEqual(result.tool_calls, [("bash", "completed")])
+            self.assertIsNone(result.error)
+
+    def test_message_stop_reason_and_error_message_are_diagnostics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _write(
+                tmp,
+                [
+                    {
+                        "type": "message_end",
+                        "message": {"role": "assistant", "stopReason": "error", "errorMessage": "provider down"},
+                    }
+                ],
+            )
+            result = pi._parse_pi(path, 0, False)
+            self.assertIn("provider down", result.error or "")
+
     def test_usage_variants_and_cost_are_numeric_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = _write(

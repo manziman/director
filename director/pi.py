@@ -193,6 +193,18 @@ def _tool_result_text(value: Any) -> str | None:
     return None
 
 
+def _message_diagnostic(message: Any) -> str | None:
+    if not isinstance(message, dict):
+        return None
+    diagnostic = _diagnostic(message)
+    if diagnostic:
+        return diagnostic
+    stop_reason = message.get("stopReason")
+    if stop_reason in {"error", "failed", "aborted"}:
+        return f"assistant message stopped with {stop_reason}"
+    return None
+
+
 def _tool_event(record: dict, name: str, status: str) -> dict:
     event = {
         "name": name.lower(),
@@ -259,6 +271,9 @@ def _parse_pi(log_path: Path, rc: int, timed_out: bool) -> RunResult:
             messages = record.get("messages")
             if isinstance(messages, list):
                 for item in reversed(messages):
+                    diagnostic = _message_diagnostic(item)
+                    if diagnostic:
+                        diagnostics.append(diagnostic)
                     text = _message_text(item)
                     if text:
                         agent_text = text
@@ -270,7 +285,11 @@ def _parse_pi(log_path: Path, rc: int, timed_out: bool) -> RunResult:
             if cost:
                 agent_costs.append(cost)
         elif event_type == "message_end":
-            text = _message_text(record.get("message"))
+            message = record.get("message")
+            diagnostic = _message_diagnostic(message)
+            if diagnostic:
+                diagnostics.append(diagnostic)
+            text = _message_text(message)
             if text:
                 message_text = text
             usage = _usage(record)
@@ -295,8 +314,10 @@ def _parse_pi(log_path: Path, rc: int, timed_out: bool) -> RunResult:
         elif event_type == "tool_execution_end":
             name = str(record.get("toolName", "tool"))
             result = record.get("result")
-            result_has_error = isinstance(result, dict) and any(
-                key in result for key in ("error", "errorMessage", "isError")
+            result_has_error = isinstance(result, dict) and (
+                bool(result.get("isError"))
+                or bool(result.get("error"))
+                or bool(result.get("errorMessage"))
             )
             failed = bool(record.get("isError")) or bool(record.get("errorMessage")) or result_has_error
             status = "failed" if failed else "completed"
@@ -324,11 +345,11 @@ def _parse_pi(log_path: Path, rc: int, timed_out: bool) -> RunResult:
         tokens["total"] = tokens["input"] + tokens["output"]
 
     if agent_costs:
-        cost_reported = agent_costs[-1]
+        cost_reported = sum(agent_costs)
     elif turn_costs:
         cost_reported = sum(turn_costs)
     else:
-        cost_reported = message_costs[-1] if message_costs else 0.0
+        cost_reported = sum(message_costs)
 
     text = agent_text or message_text
     if not records and raw.strip():
