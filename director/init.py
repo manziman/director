@@ -82,14 +82,23 @@ def prompt_gate(name: str) -> str:
     return input(f"command for {name} gate (blank to skip): ").strip()
 
 
+def prompt_gate_name() -> str:
+    """Prompt once for a gate name; blank finishes gate configuration."""
+    return input("gate name (blank to finish): ").strip()
+
+
 def render_config(tiers: dict[str, str], gates: dict[str, str]) -> str:
     """Render a minimal `.director/config.toml` text from tiers and gates."""
 
-    def emit(table: dict[str, str]) -> list[str]:
+    def emit(table: dict[str, str], *, quote_keys: bool = False) -> list[str]:
         lines = []
         for key, value in table.items():
+            rendered_key = key
+            if quote_keys:
+                escaped_key = key.replace("\\", "\\\\").replace('"', '\\"')
+                rendered_key = f'"{escaped_key}"'
             escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-            lines.append(f'{key} = "{escaped}"')
+            lines.append(f'{rendered_key} = "{escaped}"')
         return lines
 
     parts: list[str] = []
@@ -97,7 +106,7 @@ def render_config(tiers: dict[str, str], gates: dict[str, str]) -> str:
     parts.extend(emit(tiers))
     parts.append("")
     parts.append("[gates]")
-    parts.extend(emit(gates))
+    parts.extend(emit(gates, quote_keys=True))
     parts.append("")
     parts.append("# Advanced options (pricing, limits, review) are omitted here.")
     parts.append("# See the bundled config.example.toml for the full schema.")
@@ -151,8 +160,10 @@ def run_init(repo: str, *, user: bool = False, local: bool = False) -> Path:
         tiers[role] = prompt_model(role, models)
 
     gates: dict[str, str] = {}
-    for name in ("test", "lint", "typecheck"):
-        gates[name] = prompt_gate(name)
+    while name := prompt_gate_name():
+        command = prompt_gate(name)
+        if command:
+            gates[name] = command
 
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(render_config(tiers, gates))

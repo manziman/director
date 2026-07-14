@@ -202,5 +202,34 @@ class TestPlanSource(unittest.TestCase):
         self.assertIn("_run_shell(n.test_cmd, repo)", self.src)
 
 
+class TestRepositoryGatePlanningContext(unittest.TestCase):
+    def test_planner_prompt_includes_only_effective_gates_in_order(self):
+        cfg = types.SimpleNamespace(
+            gates={"security": " scan ", "disabled": "  ", "verify": "check"}
+        )
+        prompt = plan._planner_prompt("spec", "summary", cfg)
+        self.assertLess(prompt.index("security: scan"), prompt.index("verify: check"))
+        self.assertNotIn("disabled", prompt)
+
+    def test_plan_critique_receives_same_authoritative_gate_context(self):
+        cfg = types.SimpleNamespace(gates={"verify": "check"})
+        prompt = plan._plan_critique_prompt("spec", "plan", cfg)
+        self.assertIn("REPOSITORY GATES (authoritative complete set):", prompt)
+        self.assertIn("verify: check", prompt)
+
+    def test_no_gates_is_explicit(self):
+        cfg = types.SimpleNamespace(gates={})
+        prompt = plan._planner_prompt("spec", "summary", cfg)
+        self.assertIn("No repository-wide gates are configured", prompt)
+
+    def test_planner_template_forbids_inventing_repository_gates(self):
+        template = (
+            Path(__file__).parent.parent / "director" / "agent_templates" / "planner.md"
+        ).read_text()
+        self.assertIn("authoritative, complete set", template)
+        self.assertIn("Do not invent", template)
+        self.assertIn("node-local", template)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3,6 +3,10 @@
 Roles → tier model strings, deterministic gate commands, per-model pricing, and
 run limits. Everything the orchestrator knows about a "model" comes from here;
 switching executor models is a config edit, never a code change.
+
+Repo-local tables deep-merge over user defaults except ``[gates]``: when a repo
+config exists, its gate table is the complete authoritative set. An omitted table
+therefore means that the repository has no integration gates.
 """
 
 from __future__ import annotations
@@ -18,11 +22,12 @@ ROLES = ("planner", "test_author", "executor", "explorer", "reviewer", "escalati
 class Config:
     path: Path
     tiers: dict[str, str]  # role -> "provider/model"
-    gates: dict[str, str]  # "test"|"lint"|"typecheck" -> command ("" = skip)
+    gates: dict[str, str]  # gate name -> command ("" = skip); insertion-ordered
     pricing: dict[str, dict]  # "provider/model" -> {"input": $/Mtok, "output": $/Mtok}
     limits: dict  # node_timeout_secs, cost_ceiling_usd, max_attempts
     sampling: dict  # role -> {temperature, top_p, top_k}
     review: dict  # two-stage review knobs (Phase 2.5)
+    repository: dict = field(default_factory=dict)  # repository-level settings
     # Optional declared target stack; currently declaration-only (available on Config);
     # recon remains the primary signal to the planner.
     target: dict = field(default_factory=dict)
@@ -109,6 +114,28 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+def _preserve_legacy_repository_settings(data: dict) -> dict:
+    """Copy legacy non-command gate settings into their repository table.
+
+    This runs per config layer before merging so replacing executable repo gates
+    cannot discard a user-level legacy ignore default.
+    """
+    gates = data.get("gates", {})
+    repository = data.get("repository", {})
+    legacy_ignore = gates.get("ignore") if isinstance(gates, dict) else None
+    if (
+        legacy_ignore is None
+        or isinstance(legacy_ignore, str)
+        or not isinstance(repository, dict)
+        or "ignore" in repository
+    ):
+        return data
+
+    migrated = {**data}
+    migrated["repository"] = {**repository, "ignore": legacy_ignore}
+    return migrated
+
+
 def _ensure_builtin_providers_registered():
     """Import built-in providers and ensure the current registry has their keys."""
     from director import claudecode, codex, opencode, pi, provider
@@ -159,14 +186,34 @@ def _build_config(data: dict, path: Path) -> Config:
     pricing = data.get("pricing", {})
     _validate_provider_keys(tiers, pricing)
 
+    # Gate names are user-defined; string values are executable commands.
+    raw_gates = data.get("gates", {})
+    gates = {}
+    legacy_ignore = None
+
+    for key, value in raw_gates.items():
+        if isinstance(value, str):
+            gates[key] = value
+        elif key == "ignore":
+            # Preserve the legacy list-valued location as a migration fallback.
+            legacy_ignore = value
+
+    repository = dict(data.get("repository", {}))
+
+    # Legacy fallback: if [gates].ignore is non-string and [repository].ignore
+    # is absent, use [gates].ignore as [repository].ignore
+    if legacy_ignore is not None and "ignore" not in repository:
+        repository["ignore"] = legacy_ignore
+
     return Config(
         path=path,
         tiers=tiers,
-        gates=data.get("gates", {}),
+        gates=gates,
         pricing=pricing,
         limits=data.get("limits", {}),
         sampling=data.get("sampling", {}),
         review=data.get("review", {}),
+        repository=repository,
         target=data.get("target", {}),
     )
 
@@ -184,11 +231,14 @@ def load(repo: Path) -> Config:
     data: dict = {}
     if user_path.exists():
         with user_path.open("rb") as f:
-            data = tomllib.load(f)
+            data = _preserve_legacy_repository_settings(tomllib.load(f))
     if repo_path.exists():
         with repo_path.open("rb") as f:
-            repo_data = tomllib.load(f)
+            repo_data = _preserve_legacy_repository_settings(tomllib.load(f))
         data = _deep_merge(data, repo_data)
+        # Gate omission must be meaningful. Repository gates are a complete set,
+        # not per-name overrides of user defaults from an unrelated repository.
+        data["gates"] = repo_data.get("gates", {})
 
     active_path = repo_path if repo_path.exists() else user_path
     return _build_config(data, active_path)

@@ -17,7 +17,7 @@ You receive: a self-contained **spec**, an **allowlist of files** you may modify
 and the **failing test output** that defines success.
 
 Your only success condition: make the provided tests pass while keeping the
-repo-wide gates (full test suite, lint, typecheck) green.
+configured repository-wide gates green.
 
 Rules — do not violate:
 1. **Watch it fail first.** Run the provided tests BEFORE writing any

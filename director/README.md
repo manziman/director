@@ -58,7 +58,7 @@ self-critic are mechanically the same gate — only the approver differs.
    (fresh OpenCode context each attempt). Exhausted → retry the SAME node once at
    the `escalation` tier (never the whole job).
 6. Pass → commit + merge into the job branch; mark done in `.director/state.json`.
-   After all nodes: an **integration gate** runs the repo-wide suite/lint/typecheck.
+   After all nodes: an **integration gate** runs every configured repository gate.
 
 Each node's transcript is also checked for **watch-it-fail** (Phase 3 §1): did the
 executor run the failing tests *before* its first edit? This is advisory (the
@@ -107,10 +107,10 @@ For `bench`, create
 - **Tests live on the job branch**, not a separate `director/tests-<id>` branch
   (dependent nodes need both the tests and prior nodes' impls; one branch is
   simpler and equivalent).
-- **The full repo-wide test suite is the *integration* gate, not a per-node gate.**
-  Sibling nodes' tests are intentionally red until their own node runs, so a
-  per-node full-suite gate would always fail mid-DAG. Per node we gate on
-  `node.test_cmd` + allowlist; the full suite/lint/typecheck run once after merge.
+- **Configured repository gates are integration gates, not per-node gates.**
+  Sibling nodes' tests are intentionally red until their own node runs, so
+  repository-wide commands may fail mid-DAG. Per node we gate on
+  `node.test_cmd` + allowlist; configured repository gates run once after merge.
 
 ## Persistence (`.director/`, all resumable/debuggable)
 

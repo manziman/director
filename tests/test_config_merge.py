@@ -6,7 +6,8 @@
   * repo-level:  <repo>/.director/config.toml
 
 ``load(repo)`` deep-merges the repo config OVER the user config (repo wins,
-per sub-key, recursively). It exposes three new module-level helpers:
+per sub-key, recursively), except that repo gates replace user gates wholesale.
+It exposes three new module-level helpers:
 
   * ``_user_config_path()``   -> Path.home() / '.director' / 'config.toml'
   * ``_deep_merge(base, override)`` -> new dict, recursive, non-mutating
@@ -65,8 +66,8 @@ output = 2.0
 """
 
 # Repo-level config that overrides a SUBSET of keys inside several tables.
-# Every table below is a partial override; the unspecified keys must fall back
-# to the user values via deep merge.
+# Unspecified keys fall back through deep merge except in [gates], which is the
+# repository's complete authoritative gate set.
 REPO_OVERRIDE_TOML = """
 [tiers]
 executor = "opencode/repo/exec"
@@ -249,10 +250,26 @@ class LoadBothMergeTests(_HomeIsolationMixin, unittest.TestCase):
         self.assertEqual(self.cfg.tiers["executor"], "opencode/repo/exec")  # overridden
         self.assertEqual(self.cfg.tiers["planner"], "opencode/user/plan")  # fallback
 
-    def test_gates_override_and_fallback(self):
-        self.assertEqual(self.cfg.gates["lint"], "repo-lint-cmd")  # overridden
-        self.assertEqual(self.cfg.gates["test"], "user-test-cmd")  # fallback
-        self.assertEqual(self.cfg.gates["typecheck"], "user-tc-cmd")  # fallback
+    def test_repo_gates_replace_user_gate_table(self):
+        self.assertEqual(self.cfg.gates, {"lint": "repo-lint-cmd"})
+
+    def test_omitted_repo_gates_disable_user_gate_defaults(self):
+        _write(self.repo, '[tiers]\nexecutor = "opencode/repo/exec"\n')
+        cfg = config.load(self.repo)
+        self.assertEqual(cfg.gates, {})
+
+    def test_repo_gate_replacement_preserves_user_legacy_ignore(self):
+        user_with_legacy_ignore = USER_TOML.replace(
+            'typecheck = "user-tc-cmd"',
+            'typecheck = "user-tc-cmd"\nignore = ["*.generated"]',
+        )
+        _write(self.home, user_with_legacy_ignore)
+        _write(self.repo, '[tiers]\nexecutor = "opencode/repo/exec"\n')
+
+        cfg = config.load(self.repo)
+
+        self.assertEqual(cfg.gates, {})
+        self.assertEqual(cfg.repository["ignore"], ["*.generated"])
 
     def test_limits_override_and_fallback(self):
         self.assertEqual(self.cfg.limits["max_attempts"], 9)  # overridden
@@ -329,6 +346,41 @@ class LoadFileIgnoresUserConfigTests(_HomeIsolationMixin, unittest.TestCase):
         self.assertEqual(cfg.tiers["planner"], "opencode/repo/plan")
         self.assertNotIn("lint", cfg.gates)  # user's lint not merged
         self.assertNotIn("opencode/user/plan", cfg.pricing)  # user's pricing not merged
+
+
+# --------------------------------------------------------------------------- #
+# user-defined repository gates
+# --------------------------------------------------------------------------- #
+class UserDefinedGateConfigTests(_HomeIsolationMixin, unittest.TestCase):
+    def _load(self, extra: str):
+        tiers_only = REPO_FULL_TOML.split("[gates]", 1)[0]
+        path = _write(self.repo, tiers_only + extra)
+        return config.load_file(path)
+
+    def test_arbitrary_gate_names_and_order_are_preserved(self):
+        cfg = self._load('\n[gates]\nsecurity = "scan"\nverify = "check"\ndisabled = ""\n')
+        self.assertEqual(
+            list(cfg.gates.items()),
+            [("security", "scan"), ("verify", "check"), ("disabled", "")],
+        )
+
+    def test_absent_gates_are_not_synthesized(self):
+        cfg = self._load("")
+        self.assertEqual(cfg.gates, {})
+
+    def test_legacy_ignore_moves_out_of_gate_commands(self):
+        cfg = self._load('\n[gates]\nverify = "check"\nignore = ["*.log"]\n')
+        self.assertEqual(cfg.gates, {"verify": "check"})
+        self.assertEqual(cfg.repository["ignore"], ["*.log"])
+
+    def test_repository_ignore_wins_over_legacy_location(self):
+        cfg = self._load('\n[gates]\nignore = ["old"]\n[repository]\nignore = ["new"]\n')
+        self.assertEqual(cfg.repository["ignore"], ["new"])
+
+    def test_string_gate_named_ignore_remains_executable(self):
+        cfg = self._load('\n[gates]\nignore = "run-ignore-check"\n')
+        self.assertEqual(cfg.gates, {"ignore": "run-ignore-check"})
+        self.assertNotIn("ignore", cfg.repository)
 
 
 if __name__ == "__main__":

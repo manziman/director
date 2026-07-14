@@ -25,7 +25,7 @@ from director.config import Config
 from director.models import Node
 
 
-def _mk_config(gates: dict | None = None) -> Config:
+def _mk_config(repository: dict | None = None) -> Config:
     return Config(
         path=Path("/fake/config.toml"),
         tiers={
@@ -36,11 +36,12 @@ def _mk_config(gates: dict | None = None) -> Config:
             "reviewer": "c/r",
             "escalation": "c/e",
         },
-        gates=gates or {},
+        gates={},
         pricing={},
         limits={"flake_runs": 1, "node_timeout_secs": 60, "max_attempts": 2},
         sampling={},
         review={},
+        repository=repository or {},
     )
 
 
@@ -167,10 +168,10 @@ class BuildIgnoreMatcherTests(unittest.TestCase):
 
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def _matcher(self, gates: dict | None = None):
+    def _matcher(self, repository: dict | None = None):
         from director.gates import build_ignore_matcher
 
-        return build_ignore_matcher(self.tmp, _mk_config(gates))
+        return build_ignore_matcher(self.tmp, _mk_config(repository))
 
     # --- return type ---------------------------------------------------------
 
@@ -230,7 +231,7 @@ class BuildIgnoreMatcherTests(unittest.TestCase):
         match = self._matcher()
         self.assertFalse(match("src/dist/foo.js"))
 
-    # --- config [gates].ignore patterns --------------------------------------
+    # --- config [repository].ignore patterns ---------------------------------
 
     def test_config_ignore_list_adds_patterns(self):
         match = self._matcher({"ignore": ["*.log"]})
@@ -381,7 +382,7 @@ class NodeGateByproductFilterTests(unittest.TestCase):
         self.assertTrue(result.ok, result.detail)
 
     def test_config_ignore_pattern_honored_in_gate(self):
-        """A file matching cfg.gates['ignore'] is treated as a byproduct."""
+        """A file matching cfg.repository['ignore'] is treated as a byproduct."""
         from director.gates import node_gate
 
         (self.tmp / "mod.py").write_text("def f(): pass\n")

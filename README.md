@@ -7,7 +7,7 @@ director tests one hypothesis:
 > A strong **planner** model decomposes a coding task into small, atomic, well-specified
 > units with acceptance tests written *first*. A cheaper **executor** model — local or
 > low-cost cloud — implements each unit in an isolated, fresh context. **Deterministic
-> gates** (tests, lint, typecheck — exit codes, never an LLM's opinion) decide what
+> gates** (user-defined commands; exit codes, never an LLM's opinion) decide what
 > merges. This cuts token cost dramatically with minimal quality loss.
 
 It is **model-agnostic by construction**: roles (`planner`, `executor`, `reviewer`, …)
@@ -109,7 +109,7 @@ director run
 | Command | What it does |
 | --- | --- |
 | `director plan "<task>" [--auto] [--no-critique] [--continue]` | Brainstorm → spec → test-gated task DAG, with two artifact-based approval gates. |
-| `director run [--parallel N] [--max-attempts K]` | Execute the DAG: each node in an isolated git worktree, gated by tests/lint/typecheck, auto-merged on pass; escalates a stuck node one tier up. |
+| `director run [--parallel N] [--max-attempts K]` | Execute the DAG: each node runs in an isolated git worktree behind its acceptance test; configured repository gates run after merge. Escalates a stuck node one tier up. |
 | `director status` | Per-node progress, attempts, cost, and the executor-tier completion rate. |
 | `director ui [--port 8642] [--host 127.0.0.1] [--open]` | Live read-only web dashboard: planning-stage progress (recon → spec → gates → ready, with recon/spec viewers), then the DAG animating as nodes run/pass/fail, with per-node detail, logs, and cost/metrics — all read from `.director/`. Localhost-only by default; `--host 0.0.0.0` exposes unauthenticated read access (specs, logs) to your network. |
 | `director auto "<task>" [--input FILE\|-] [--open] [--hold] [--max-cost N] [--force]` | One-shot autonomous mode: plan with self-critiqued gates (no pauses) → run, serving the live dashboard from the same process. Task from a positional string, `--input FILE`, or `--input -` (stdin); resumes an interrupted job, erroring on a changed task unless `--force` replans. `--open` implies `--hold` (dashboard stays up after the run until Ctrl-C). |
@@ -124,8 +124,9 @@ All state lives under `.director/` (resumable, debuggable): `plan.json`, `state.
 
 `director init` interactively creates `.director/config.toml` — it asks which model
 to use for each role and what your deterministic gate commands are, then writes the
-config for you. A config is just roles → `provider/model-ref` strings, the deterministic
-gate commands, per-model pricing, and run limits. For the full/advanced schema, see
+config for you. A config is just roles → `provider/model-ref` strings, user-defined
+gate commands (arbitrary shell commands you choose; director has no fixed gate vocabulary),
+per-model pricing, and run limits. For the full/advanced schema, see
 the complete, commented [`director/config.example.toml`](director/config.example.toml):
 it shows how to bind the executor tier to a local
 model (≈ $0 implementation), a low-cost cloud model (zero local infra), or a frontier
@@ -142,8 +143,10 @@ director supports two config levels that are combined at runtime:
   the current repository and take precedence over user-level settings.
 
 The repo file deep-merges over the user file: nested tables merge recursively, while
-scalars and arrays replace wholesale. For example, a user file might supply several roles
-under `[tiers]`:
+scalars and arrays replace wholesale. The repo-local `[gates]` table is the exception:
+it is the complete authoritative gate set and replaces user-level gates wholesale.
+Omitting it configures zero repository gates. For example, a user file might supply
+several roles under `[tiers]`:
 
 ```toml
 # ~/.director/config.toml

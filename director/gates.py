@@ -6,7 +6,7 @@ Per-node gate (in the node's worktree):
     which by construction also rejects any edit to the committed test files).
 
 Integration gate (on the job branch, after all nodes merge):
-  - the full repo-wide suite + lint + typecheck from config.
+  - every configured repository gate, in declaration order.
 The full suite is NOT run per node because sibling nodes' tests are intentionally
 red until their own node executes.
 """
@@ -16,7 +16,7 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -37,9 +37,17 @@ class GateResult:
     detail: str = ""
 
 
+@dataclass(frozen=True)
+class Gate:
+    """A named deterministic command, independent of configuration storage."""
+
+    name: str
+    command: str
+
+
 # Dogfood / last-resort safety net so director's own Python byproducts stay clean
 # even if a target's .gitignore is incomplete. Real cross-stack generality comes
-# from .gitignore-derivation + the [gates].ignore config key.
+# from .gitignore-derivation + the [repository].ignore config key.
 DEFAULT_IGNORE: tuple[str, ...] = (
     "__pycache__",
     ".pytest_cache",
@@ -81,8 +89,8 @@ def build_ignore_matcher(worktree: Path, cfg: Config) -> Callable[[str], bool]:
     """Assemble ONE pattern list and return a closure that matches paths."""
     patterns = list(DEFAULT_IGNORE)
 
-    # Config [gates].ignore patterns
-    raw = cfg.gates.get("ignore", [])
+    # Config [repository].ignore patterns
+    raw = cfg.repository.get("ignore", [])
     if isinstance(raw, list):
         patterns.extend(p for p in raw if isinstance(p, str))
 
@@ -113,6 +121,26 @@ def _run(cmd: str, cwd: Path, timeout: int) -> tuple[int, str]:
         if o.timed_out
         else (o.returncode, o.output)
     )
+
+
+def configured_gates(commands: Mapping[str, str]) -> tuple[Gate, ...]:
+    """Normalize configured commands into executable gates in declaration order."""
+    return tuple(
+        Gate(name=name, command=command.strip())
+        for name, command in commands.items()
+        if command.strip()
+    )
+
+
+def run_gates(gates: Iterable[Gate], cwd: Path, timeout: int) -> GateResult:
+    """Run arbitrary gates and report failures by their user-defined names."""
+    failures, detail = [], []
+    for gate in gates:
+        rc, out = _run(gate.command, cwd, timeout)
+        if rc != 0:
+            failures.append(gate.name)
+            detail.append(f"$ {gate.command}\n{out[-2000:]}")
+    return GateResult(not failures, failures, "\n".join(detail))
 
 
 def test_files_intact(node: Node, worktree: Path) -> list[str]:
@@ -183,14 +211,4 @@ def node_gate(node: Node, worktree: Path, cfg: Config) -> GateResult:
 
 
 def integration_gate(repo: Path, cfg: Config) -> GateResult:
-    timeout = cfg.node_timeout
-    failures, detail = [], []
-    for name in ("test", "lint", "typecheck"):
-        cmd = cfg.gates.get(name, "").strip()
-        if not cmd:
-            continue
-        rc, out = _run(cmd, repo, timeout)
-        if rc != 0:
-            failures.append(name)
-            detail.append(f"$ {cmd}\n{out[-2000:]}")
-    return GateResult(not failures, failures, "\n".join(detail))
+    return run_gates(configured_gates(cfg.gates), repo, cfg.node_timeout)
