@@ -7,10 +7,9 @@ switching executor models is a config edit, never a code change.
 
 from __future__ import annotations
 
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-
-import tomllib
 
 ROLES = ("planner", "test_author", "executor", "explorer", "reviewer", "escalation")
 

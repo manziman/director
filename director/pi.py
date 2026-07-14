@@ -252,19 +252,24 @@ def _parse_pi(log_path: Path, rc: int, timed_out: bool) -> RunResult:
 
     for record in records:
         event_type = record.get("type")
-        if event_type in {
-            "agent_start",
-            "agent_end",
-            "turn_start",
-            "turn_end",
-            "message_start",
-            "message_update",
-            "message_end",
-            "compaction_start",
-            "compaction_end",
-            "auto_retry_start",
-            "auto_retry_end",
-        } or event_type in _TOOL_EVENT_TYPES or event_type in _ERROR_EVENT_TYPES:
+        if (
+            event_type
+            in {
+                "agent_start",
+                "agent_end",
+                "turn_start",
+                "turn_end",
+                "message_start",
+                "message_update",
+                "message_end",
+                "compaction_start",
+                "compaction_end",
+                "auto_retry_start",
+                "auto_retry_end",
+            }
+            or event_type in _TOOL_EVENT_TYPES
+            or event_type in _ERROR_EVENT_TYPES
+        ):
             n_steps += 1
 
         if event_type == "agent_end":
@@ -319,19 +324,32 @@ def _parse_pi(log_path: Path, rc: int, timed_out: bool) -> RunResult:
                 or bool(result.get("error"))
                 or bool(result.get("errorMessage"))
             )
-            failed = bool(record.get("isError")) or bool(record.get("errorMessage")) or result_has_error
+            failed = (
+                bool(record.get("isError")) or bool(record.get("errorMessage")) or result_has_error
+            )
             status = "failed" if failed else "completed"
             tool_calls.append((name, status))
             tool_events.append(_tool_event(record, name, status))
             if failed:
                 diagnostic = _tool_result_text(result) or f"tool {name} failed"
                 tool_errors.append(diagnostic)
-        elif event_type in _ERROR_EVENT_TYPES | {"auto_retry_start", "auto_retry_end", "compaction_end"}:
+        elif event_type in _ERROR_EVENT_TYPES | {
+            "auto_retry_start",
+            "auto_retry_end",
+            "compaction_end",
+        }:
             diagnostic = _diagnostic(record)
             if diagnostic:
                 diagnostics.append(diagnostic)
 
-    tokens = {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "cache_write": 0, "total": 0}
+    tokens = {
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "total": 0,
+    }
     selected_usage = usage_records or agent_usage or message_usage
     for usage in selected_usage:
         for key in ("input", "output", "cache_read", "cache_write"):

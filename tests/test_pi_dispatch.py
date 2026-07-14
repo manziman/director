@@ -21,7 +21,9 @@ class TestPiRegistration(unittest.TestCase):
         self.assertIsInstance(provider.resolve("pi"), pi.PiProvider)
 
     def test_config_builtin_registration_includes_pi(self):
-        self.assertIn("pi", [item.name for item in config._ensure_builtin_providers_registered().providers()])
+        self.assertIn(
+            "pi", [item.name for item in config._ensure_builtin_providers_registered().providers()]
+        )
 
     def test_init_side_effect_import_is_present(self):
         source = (ROOT / "director" / "init.py").read_text()

@@ -34,8 +34,19 @@ class TestParsePi(unittest.TestCase):
             path = _write(
                 tmp,
                 [
-                    {"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": "old"}]}},
-                    {"type": "agent_end", "messages": [{"role": "assistant", "content": [{"type": "text", "text": "final"}]}]},
+                    {
+                        "type": "message_end",
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": "old"}],
+                        },
+                    },
+                    {
+                        "type": "agent_end",
+                        "messages": [
+                            {"role": "assistant", "content": [{"type": "text", "text": "final"}]}
+                        ],
+                    },
                 ],
             )
             result = pi._parse_pi(path, 0, False)
@@ -49,11 +60,33 @@ class TestParsePi(unittest.TestCase):
                 "bad line\n"
                 + json.dumps({"type": "unknown", "value": object.__name__})
                 + "\n"
-                + json.dumps({"type": "tool_execution_start", "toolCallId": "1", "toolName": "bash", "args": {"command": "ls"}})
+                + json.dumps(
+                    {
+                        "type": "tool_execution_start",
+                        "toolCallId": "1",
+                        "toolName": "bash",
+                        "args": {"command": "ls"},
+                    }
+                )
                 + "\n"
-                + json.dumps({"type": "tool_execution_end", "toolCallId": "1", "toolName": "bash", "result": "ok", "isError": False})
+                + json.dumps(
+                    {
+                        "type": "tool_execution_end",
+                        "toolCallId": "1",
+                        "toolName": "bash",
+                        "result": "ok",
+                        "isError": False,
+                    }
+                )
                 + "\n"
-                + json.dumps({"type": "tool_execution_end", "toolName": "write", "result": {"error": "denied"}, "isError": True}),
+                + json.dumps(
+                    {
+                        "type": "tool_execution_end",
+                        "toolName": "write",
+                        "result": {"error": "denied"},
+                        "isError": True,
+                    }
+                ),
             )
             result = pi._parse_pi(path, 0, False)
             self.assertEqual(result.tool_calls, [("bash", "completed"), ("write", "failed")])
@@ -65,7 +98,11 @@ class TestParsePi(unittest.TestCase):
             path = _write(
                 tmp,
                 [
-                    {"type": "tool_execution_end", "toolName": "bash", "result": {"error": "denied"}},
+                    {
+                        "type": "tool_execution_end",
+                        "toolName": "bash",
+                        "result": {"error": "denied"},
+                    },
                     {"type": "auto_retry_end", "success": False, "finalError": "retry exhausted"},
                     {"type": "extension_error", "message": "extension broke"},
                 ],
@@ -79,7 +116,13 @@ class TestParsePi(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = _write(
                 tmp,
-                [{"type": "tool_execution_end", "toolName": "bash", "result": {"isError": False, "text": "ok"}}],
+                [
+                    {
+                        "type": "tool_execution_end",
+                        "toolName": "bash",
+                        "result": {"isError": False, "text": "ok"},
+                    }
+                ],
             )
             result = pi._parse_pi(path, 0, False)
             self.assertEqual(result.tool_calls, [("bash", "completed")])
@@ -92,7 +135,11 @@ class TestParsePi(unittest.TestCase):
                 [
                     {
                         "type": "message_end",
-                        "message": {"role": "assistant", "stopReason": "error", "errorMessage": "provider down"},
+                        "message": {
+                            "role": "assistant",
+                            "stopReason": "error",
+                            "errorMessage": "provider down",
+                        },
                     }
                 ],
             )
@@ -120,7 +167,17 @@ class TestParsePi(unittest.TestCase):
                 ],
             )
             result = pi._parse_pi(path, 0, False)
-            self.assertEqual(result.tokens, {"input": 12, "output": 8, "reasoning": 0, "cache_read": 2, "cache_write": 1, "total": 20})
+            self.assertEqual(
+                result.tokens,
+                {
+                    "input": 12,
+                    "output": 8,
+                    "reasoning": 0,
+                    "cache_read": 2,
+                    "cache_write": 1,
+                    "total": 20,
+                },
+            )
             self.assertEqual(result.cost_reported, 0.25)
 
     def test_overlapping_event_costs_are_not_double_counted(self):
@@ -166,10 +223,15 @@ class TestRunPi(unittest.TestCase):
 
         def fake_popen(cmd, **kwargs):
             captured.update(cmd=cmd, **kwargs)
-            kwargs["stdout"].write(b'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}\n')
+            kwargs["stdout"].write(
+                b'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}\n'
+            )
             return _Handle()
 
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(pi.proc_mod, "popen_tree", fake_popen):
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.object(pi.proc_mod, "popen_tree", fake_popen),
+        ):
             result = pi.run_pi(
                 agent="planner",
                 model="anthropic/claude-sonnet-4-5",
@@ -178,7 +240,18 @@ class TestRunPi(unittest.TestCase):
                 log_path=Path(tmp) / "nested" / "run.jsonl",
                 timeout=7,
             )
-        self.assertEqual(captured["cmd"][:7], ["pi", "-p", "--mode", "json", "--no-session", "--model", "anthropic/claude-sonnet-4-5"])
+        self.assertEqual(
+            captured["cmd"][:7],
+            [
+                "pi",
+                "-p",
+                "--mode",
+                "json",
+                "--no-session",
+                "--model",
+                "anthropic/claude-sonnet-4-5",
+            ],
+        )
         self.assertIn("--append-system-prompt", captured["cmd"])
         self.assertEqual(captured["cmd"][-1], "do the task")
         self.assertEqual(captured["env"]["PI_SKIP_VERSION_CHECK"], "1")
