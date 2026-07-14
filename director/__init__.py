@@ -7,4 +7,4 @@ typecheck, exit codes — never an LLM judge) decide what merges. Roles bind to
 model tiers in `.director/config.toml`; nothing here knows "local" vs "cloud".
 """
 
-__version__ = "0.10.1"
+__version__ = "0.10.2"

@@ -1,6 +1,43 @@
 # CHANGELOG
 
 
+## v0.10.2 (2026-07-14)
+
+### Bug Fixes
+
+- Bypass repo commit hooks on director's internal git commits (#35)
+  ([#36](https://github.com/manziman/director/pull/36),
+  [`3b23ed1`](https://github.com/manziman/director/commit/3b23ed1ec31b7cc58a7f03905248a61860ed7e52))
+
+* fix: bypass repo commit hooks on director's internal git commits (#35)
+
+director's internal commits/merges run inside director-managed worktrees and branches with
+  machine-generated, non-Conventional messages. In a target repo with commit-time hooks (husky
+  commit-msg + commitlint, gitleaks pre-commit, etc.) those hooks reject the commit, and the
+  non-zero exit propagated as an unhandled CalledProcessError that crashed the whole run mid-flight
+  — after nodes had already passed their gates.
+
+Pass --no-verify on gitutil.commit_all's commit and gitutil.merge_branch's merge so director's own
+  commits bypass the target repo's hooks, matching the intent of commit.gpgsign=false already being
+  set. Bypassing is appropriate: these commits are internal to director's isolated branches, not
+  human contributions. Covers both commit sites (plan._author_tests and run._finalize).
+
+Fixes #35.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* docs: tell coding agents to dogfood director for development
+
+Add AGENTS.md and CLAUDE.md and a CONTRIBUTING.md section instructing coding agents to prefer
+  driving non-trivial changes through director (dogfooding) unless the user directs otherwise or the
+  change is trivial. Documents how to drive `director auto`, route tiers to a reachable provider,
+  and squash its internal commits into a Conventional Commit before opening a PR.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v0.10.1 (2026-07-09)
 
 ### Bug Fixes
