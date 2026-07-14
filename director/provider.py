@@ -1,6 +1,7 @@
 """Shared, dependency-free provider primitives and registry.
 
-This module imports NOTHING from the `director` package to avoid future import cycles.
+Built-in adapters include claude-code, codex, opencode, and pi. This module imports
+NOTHING from the `director` package to avoid future import cycles.
 Allowed imports: stdlib only (Python >= 3.11).
 """
 
