@@ -17,6 +17,23 @@ The test suite stubs the single external boundary (`opencode.run_agent`) and dri
 temporary git repos, so it needs **neither OpenCode nor any model provider** — it runs
 fully offline and deterministically in CI across Python 3.11–3.14.
 
+## Dogfood director for your changes
+
+This repo *is* director, so the best way to develop it is to let director build the
+change. **Coding agents and contributors should prefer driving non-trivial changes
+through `director` rather than editing by hand — unless the user/reviewer directs
+otherwise** or the change is trivial. Running the tool on its own codebase is how we
+find real bugs in it, and it yields test-gated, reviewed diffs.
+
+```bash
+director auto --input task.md    # plan → test-gated DAG → run, hands-off
+```
+
+Point the repo-local `.director/config.toml` `[gates]` at the CI commands above, route
+`[tiers]` to a provider you can actually reach, and squash director's internal commits
+into a single Conventional Commit before opening a PR. Agents: see
+[`AGENTS.md`](AGENTS.md) for the full workflow.
+
 ## Conventions
 
 - **Standard library only.** No runtime dependencies. If you reach for a third-party

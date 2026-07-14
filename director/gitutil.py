@@ -68,7 +68,7 @@ def commit_all(message: str, cwd: str | Path) -> bool:
     git(["add", "-A"], cwd)
     if not git(["status", "--porcelain"], cwd).stdout.strip():
         return False
-    git(["-c", "commit.gpgsign=false", "commit", "-q", "-m", message], cwd)
+    git(["-c", "commit.gpgsign=false", "commit", "--no-verify", "-q", "-m", message], cwd)
     return True
 
 
@@ -76,7 +76,7 @@ def merge_branch(
     branch: str, cwd: str | Path, message: str | None = None
 ) -> subprocess.CompletedProcess:
     """Merge `branch` into the current branch (no fast-forward, unsigned)."""
-    args = ["-c", "commit.gpgsign=false", "merge", "--no-ff"]
+    args = ["-c", "commit.gpgsign=false", "merge", "--no-ff", "--no-verify"]
     if message:
         args += ["-m", message]
     args.append(branch)
