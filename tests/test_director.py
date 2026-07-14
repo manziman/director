@@ -725,5 +725,104 @@ class PruneStaleDirectorTestsTests(unittest.TestCase):
         self.assertTrue((self.tmp / self.STALE).exists())
 
 
+class CommitAllAndMergeBranchNoVerifyTests(unittest.TestCase):
+    """Director's own commits/merges must bypass repo-configured hooks
+    (commit-msg, pre-commit, etc.) — those exist for human contributors, and
+    must never block the automated director loop."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="fm-noverify-"))
+        init_repo(self.tmp)
+
+    def _capture_git_calls(self):
+        """Spy on gitutil.git, recording every args list while still
+        delegating to the real implementation."""
+        calls = []
+        orig = gitutil.git
+
+        def spy(args, cwd, check=True):
+            calls.append(list(args))
+            return orig(args, cwd, check=check)
+
+        gitutil.git = spy
+        return calls, orig
+
+    def test_commit_all_passes_no_verify_and_gpgsign_false(self):
+        calls, orig = self._capture_git_calls()
+        (self.tmp / "f.txt").write_text("hello\n")
+        try:
+            ok = gitutil.commit_all("director: change", self.tmp)
+        finally:
+            gitutil.git = orig
+        self.assertTrue(ok)
+        commit_calls = [c for c in calls if "commit" in c]
+        self.assertEqual(len(commit_calls), 1)
+        commit_args = commit_calls[0]
+        self.assertIn("--no-verify", commit_args)
+        self.assertIn("commit.gpgsign=false", commit_args)
+
+    def test_commit_all_returns_false_when_nothing_to_commit(self):
+        ok = gitutil.commit_all("director: noop", self.tmp)
+        self.assertFalse(ok)
+
+    def test_merge_branch_passes_no_verify_with_message(self):
+        gitutil.git(["checkout", "-q", "-b", "feature"], self.tmp)
+        (self.tmp / "g.txt").write_text("feature change\n")
+        gitutil.git(["add", "-A"], self.tmp)
+        gitutil.git(
+            ["-c", "commit.gpgsign=false", "commit", "-q", "-m", "feature commit"], self.tmp
+        )
+        gitutil.git(["checkout", "-q", "master"], self.tmp)
+
+        calls, orig = self._capture_git_calls()
+        try:
+            result = gitutil.merge_branch("feature", self.tmp, message="merge feature")
+        finally:
+            gitutil.git = orig
+        self.assertEqual(result.returncode, 0)
+        merge_calls = [c for c in calls if "merge" in c]
+        self.assertEqual(len(merge_calls), 1)
+        merge_args = merge_calls[0]
+        self.assertIn("--no-ff", merge_args)
+        self.assertIn("--no-verify", merge_args)
+        self.assertIn("commit.gpgsign=false", merge_args)
+
+    def test_merge_branch_passes_no_verify_without_message(self):
+        gitutil.git(["checkout", "-q", "-b", "feature2"], self.tmp)
+        (self.tmp / "h.txt").write_text("feature2 change\n")
+        gitutil.git(["add", "-A"], self.tmp)
+        gitutil.git(
+            ["-c", "commit.gpgsign=false", "commit", "-q", "-m", "feature2 commit"], self.tmp
+        )
+        gitutil.git(["checkout", "-q", "master"], self.tmp)
+
+        calls, orig = self._capture_git_calls()
+        try:
+            result = gitutil.merge_branch("feature2", self.tmp)
+        finally:
+            gitutil.git = orig
+        self.assertEqual(result.returncode, 0)
+        merge_calls = [c for c in calls if "merge" in c]
+        self.assertEqual(len(merge_calls), 1)
+        merge_args = merge_calls[0]
+        self.assertIn("--no-ff", merge_args)
+        self.assertIn("--no-verify", merge_args)
+
+    def test_commit_all_bypasses_failing_commit_msg_hook(self):
+        hooks_dir = self.tmp / ".git" / "hooks"
+        hooks_dir.mkdir(exist_ok=True)
+        gitutil.git(["config", "core.hooksPath", str(hooks_dir)], self.tmp)
+        hook_path = hooks_dir / "commit-msg"
+        hook_path.write_text("#!/bin/sh\nexit 1\n")
+        hook_path.chmod(0o755)
+
+        before = int(gitutil.git(["rev-list", "--count", "HEAD"], self.tmp).stdout.strip())
+        (self.tmp / "blocked.txt").write_text("should still commit\n")
+        ok = gitutil.commit_all("director: bypass hook", self.tmp)
+        self.assertTrue(ok)
+        after = int(gitutil.git(["rev-list", "--count", "HEAD"], self.tmp).stdout.strip())
+        self.assertEqual(after, before + 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
