@@ -4,9 +4,9 @@ Roles → tier model strings, deterministic gate commands, per-model pricing, an
 run limits. Everything the orchestrator knows about a "model" comes from here;
 switching executor models is a config edit, never a code change.
 
-Repo-local tables deep-merge over user defaults except ``[gates]``: when a repo
-config exists, its gate table is the complete authoritative set. An omitted table
-therefore means that the repository has no integration gates.
+Repo-local tables deep-merge over user defaults except ``[gates]``. Gates are
+repo-local only: user-level gate commands are ignored, and an omitted repo table
+means that the repository has no integration gates.
 """
 
 from __future__ import annotations
@@ -117,8 +117,8 @@ def _deep_merge(base: dict, override: dict) -> dict:
 def _preserve_legacy_repository_settings(data: dict) -> dict:
     """Copy legacy non-command gate settings into their repository table.
 
-    This runs per config layer before merging so replacing executable repo gates
-    cannot discard a user-level legacy ignore default.
+    This runs per config layer before user gate commands are discarded and the
+    layers merge, preserving a user-level legacy ignore default.
     """
     gates = data.get("gates", {})
     repository = data.get("repository", {})
@@ -179,6 +179,7 @@ def _validate_provider_keys(tiers: dict[str, str], pricing: dict[str, dict]) -> 
 
 def _build_config(data: dict, path: Path) -> Config:
     """Validate tiers completeness and construct a Config from parsed data."""
+    data = _preserve_legacy_repository_settings(data)
     tiers = data.get("tiers", {})
     missing = [r for r in ROLES if r not in tiers]
     if missing:
@@ -188,22 +189,8 @@ def _build_config(data: dict, path: Path) -> Config:
 
     # Gate names are user-defined; string values are executable commands.
     raw_gates = data.get("gates", {})
-    gates = {}
-    legacy_ignore = None
-
-    for key, value in raw_gates.items():
-        if isinstance(value, str):
-            gates[key] = value
-        elif key == "ignore":
-            # Preserve the legacy list-valued location as a migration fallback.
-            legacy_ignore = value
-
+    gates = {key: value for key, value in raw_gates.items() if isinstance(value, str)}
     repository = dict(data.get("repository", {}))
-
-    # Legacy fallback: if [gates].ignore is non-string and [repository].ignore
-    # is absent, use [gates].ignore as [repository].ignore
-    if legacy_ignore is not None and "ignore" not in repository:
-        repository["ignore"] = legacy_ignore
 
     return Config(
         path=path,
@@ -232,12 +219,14 @@ def load(repo: Path) -> Config:
     if user_path.exists():
         with user_path.open("rb") as f:
             data = _preserve_legacy_repository_settings(tomllib.load(f))
+        # Commands in the cross-repository user config are never repository gates.
+        data["gates"] = {}
     if repo_path.exists():
         with repo_path.open("rb") as f:
             repo_data = _preserve_legacy_repository_settings(tomllib.load(f))
         data = _deep_merge(data, repo_data)
-        # Gate omission must be meaningful. Repository gates are a complete set,
-        # not per-name overrides of user defaults from an unrelated repository.
+        # Gates are repo-local only. The repository table is a complete set,
+        # and omission configures no gates.
         data["gates"] = repo_data.get("gates", {})
 
     active_path = repo_path if repo_path.exists() else user_path

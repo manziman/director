@@ -1,11 +1,11 @@
-"""Interactive `director init`: discover models, prompt for tiers/gates, render TOML.
+"""Interactive `director init`: discover models, prompt for config, render TOML.
 
 This module wires the interactive `director init` flow. It discovers available
 models by iterating registered providers and collecting their tier strings,
 prompts the user to bind each role to a model (or falls back to free-text entry
-when discovery is unavailable), prompts for the deterministic gate commands,
-and renders a minimal `.director/config.toml`. The renderer is pure and its
-output round-trips through `director.config.load_file`.
+when discovery is unavailable), prompts for optional deterministic gate commands
+only for repo-local config, and renders a minimal `.director/config.toml`. The
+renderer is pure and its output round-trips through `director.config.load_file`.
 """
 
 from __future__ import annotations
@@ -88,7 +88,7 @@ def prompt_gate_name() -> str:
 
 
 def render_config(tiers: dict[str, str], gates: dict[str, str]) -> str:
-    """Render a minimal `.director/config.toml` text from tiers and gates."""
+    """Render minimal config; omit the optional gate table when it is empty."""
 
     def emit(table: dict[str, str], *, quote_keys: bool = False) -> list[str]:
         lines = []
@@ -105,9 +105,10 @@ def render_config(tiers: dict[str, str], gates: dict[str, str]) -> str:
     parts.append("[tiers]")
     parts.extend(emit(tiers))
     parts.append("")
-    parts.append("[gates]")
-    parts.extend(emit(gates, quote_keys=True))
-    parts.append("")
+    if gates:
+        parts.append("[gates]")
+        parts.extend(emit(gates, quote_keys=True))
+        parts.append("")
     parts.append("# Advanced options (pricing, limits, review) are omitted here.")
     parts.append("# See the bundled config.example.toml for the full schema.")
     return "\n".join(parts) + "\n"
@@ -160,10 +161,11 @@ def run_init(repo: str, *, user: bool = False, local: bool = False) -> Path:
         tiers[role] = prompt_model(role, models)
 
     gates: dict[str, str] = {}
-    while name := prompt_gate_name():
-        command = prompt_gate(name)
-        if command:
-            gates[name] = command
+    if target != _user_config_path():
+        while name := prompt_gate_name():
+            command = prompt_gate(name)
+            if command:
+                gates[name] = command
 
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(render_config(tiers, gates))

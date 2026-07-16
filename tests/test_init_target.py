@@ -15,7 +15,8 @@ rewired to write to the resolved target:
   * ``run_init(repo, *, user=False, local=False)`` computes the target via
     ``resolve_init_target``, runs the SAME overwrite-confirmation prompt but
     guarding the selected target, then discovers/prompts/renders/writes to it
-    and returns it.  The positional call ``run_init(repo)`` still works.
+    and returns it. Gate prompts are repo-local only. The positional call
+    ``run_init(repo)`` still works.
 
 These tests never invoke real git: a repo is faked by creating a ``.git``
 directory (or file) in a temp tree.  HOME is monkeypatched to an isolated temp
@@ -202,6 +203,13 @@ class RunInitTargetTests(_HomeIsolatedTestCase):
         self.assertFalse(self.repo_path.exists())
         cfg = config.load_file(self.user_path)
         self.assertEqual(set(cfg.tiers), set(ROLES))
+
+    def test_user_init_never_prompts_for_repo_local_gates(self):
+        path, _, fi = self._run(answers=["1"] * len(ROLES), user=True)
+
+        self.assertEqual(path, self.user_path)
+        self.assertNotIn("[gates]", self.user_path.read_text())
+        self.assertFalse(any("gate" in prompt for prompt in fi.prompts))
 
     def test_auto_detect_writes_repo_path_when_git_present(self):
         self._make_git_repo()

@@ -12,7 +12,7 @@ director plan "<task>" --auto --no-critique   # gates auto-pass, fully hands-off
 director run [--repo .] [--parallel N] [--max-attempts K]
 director status [--repo .]
 director bench "<task>" --profiles all-frontier,cheap-cloud,local-first [--plan-profile P]
-director init [--repo .]                      # interactively create .director/config.toml (per-role models + gate commands)
+director init [--repo .]                      # create config (per-role models + optional repo-local gates)
 director sync-agents [--repo .]               # (re)install role agents into <repo>/.opencode (+ gitignore, starter opencode.json) — only for opencode tiers
 ```
 
@@ -95,10 +95,11 @@ remaining model ref is passed to that tool (`opencode/lmstudio/qwen` becomes
 `opencode run --model lmstudio/qwen`, while `claude-code/opus` becomes
 `claude --model opus`). Code/logs name only roles, so **switching executor models is
 a config edit, never a code change.** `director init` interactively creates
-`.director/config.toml`, asking which model to use per role and what your gate
-commands are; `sync-agents` only installs the role agents (plus a gitignore and a
-starter `opencode.json`) and no longer writes the config. See the bundled
-`config.example.toml` for the full/advanced schema.
+`.director/config.toml`, asking which model to use per role and, for repo-local
+config only, whether to add gate commands. The `[gates]` table is optional;
+user-level gate commands are ignored. `sync-agents` only installs the role agents
+(plus a gitignore and a starter `opencode.json`) and no longer writes the config.
+See the bundled `config.example.toml` for the full/advanced schema.
 For `bench`, create
 `.director/profiles/<name>.toml` variants (copy `config.toml`, change the executor tier).
 

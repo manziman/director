@@ -4,8 +4,9 @@
 # repo-local overrides live at <repo>/.director/config.toml and override the user
 # file via a recursive per-sub-key deep merge (table keys merge recursively, while
 # scalars and arrays replace the user value wholesale — arrays are NOT concatenated).
-# [gates] is the exception: the repo-local table is the complete set and replaces
-# user-level gates wholesale; omitting it configures zero repository gates.
+# [gates] is the exception: gates are repo-local only, and user-level gate
+# commands are ignored. The repo-local table is optional and is the complete set;
+# omitting it configures zero repository gates.
 # Profiles loaded by explicit path (bench or setup) are single-file configurations
 # and do not participate in this two-level merge.
 #
@@ -58,8 +59,8 @@ temperature = 0.6
 top_p       = 0.95
 top_k       = 20
 
-# User-defined gates: zero or more string keys mapped to shell commands. Gate
-# names and commands are entirely up to you; director has no built-in gate
+# Optional repo-local gates: zero or more user-defined string keys mapped to shell
+# commands. Names and commands are entirely up to you; director has no built-in gate
 # vocabulary. Gates execute in TOML declaration order. Empty or whitespace-only
 # commands are ignored. Omitted gates are not inferred or run. Exit code 0 passes.
 [gates]

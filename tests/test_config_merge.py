@@ -6,8 +6,8 @@
   * repo-level:  <repo>/.director/config.toml
 
 ``load(repo)`` deep-merges the repo config OVER the user config (repo wins,
-per sub-key, recursively), except that repo gates replace user gates wholesale.
-It exposes three new module-level helpers:
+per sub-key, recursively), except that gates are repo-local only and user-level
+gate commands are ignored. It exposes three new module-level helpers:
 
   * ``_user_config_path()``   -> Path.home() / '.director' / 'config.toml'
   * ``_deep_merge(base, override)`` -> new dict, recursive, non-mutating
@@ -66,8 +66,8 @@ output = 2.0
 """
 
 # Repo-level config that overrides a SUBSET of keys inside several tables.
-# Unspecified keys fall back through deep merge except in [gates], which is the
-# repository's complete authoritative gate set.
+# Unspecified keys fall back through deep merge except in [gates], which is
+# repo-local only and is the repository's complete authoritative gate set.
 REPO_OVERRIDE_TOML = """
 [tiers]
 executor = "opencode/repo/exec"
@@ -206,8 +206,11 @@ class LoadUserOnlyTests(_HomeIsolationMixin, unittest.TestCase):
         cfg = config.load(self.repo)
         self.assertEqual(cfg.tiers["planner"], "opencode/user/plan")
         self.assertEqual(cfg.tiers["executor"], "opencode/user/exec")
-        self.assertEqual(cfg.gates["lint"], "user-lint-cmd")
         self.assertEqual(cfg.limits["max_attempts"], 2)
+
+    def test_user_level_gates_are_ignored(self):
+        cfg = config.load(self.repo)
+        self.assertEqual(cfg.gates, {})
 
     def test_active_path_is_user_path(self):
         cfg = config.load(self.repo)
@@ -250,10 +253,10 @@ class LoadBothMergeTests(_HomeIsolationMixin, unittest.TestCase):
         self.assertEqual(self.cfg.tiers["executor"], "opencode/repo/exec")  # overridden
         self.assertEqual(self.cfg.tiers["planner"], "opencode/user/plan")  # fallback
 
-    def test_repo_gates_replace_user_gate_table(self):
+    def test_only_repo_local_gates_become_effective(self):
         self.assertEqual(self.cfg.gates, {"lint": "repo-lint-cmd"})
 
-    def test_omitted_repo_gates_disable_user_gate_defaults(self):
+    def test_omitted_repo_gates_remain_empty_despite_user_config(self):
         _write(self.repo, '[tiers]\nexecutor = "opencode/repo/exec"\n')
         cfg = config.load(self.repo)
         self.assertEqual(cfg.gates, {})

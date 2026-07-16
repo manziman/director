@@ -350,6 +350,10 @@ class RenderConfigTests(unittest.TestCase):
         self.assertIn("[tiers]", text)
         self.assertIn("[gates]", text)
 
+    def test_empty_gates_omit_optional_table(self):
+        text = init.render_config({"planner": "anthropic/claude-opus-4"}, {})
+        self.assertNotIn("[gates]", text)
+
     def test_roundtrips_through_tomllib(self):
         tiers = {"planner": "anthropic/claude-opus-4"}
         gates = {"test": "", "lint": "ruff check ."}
