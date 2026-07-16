@@ -30,6 +30,7 @@ from director import gitutil, proc, setup
 from director.config import Config
 from director.cost import CostLedger
 from director.dag import topo_order, validate
+from director.gates import configured_gates
 from director.models import Node, Plan
 from director.opencode import run_agent
 from director.setup import sync_agents
@@ -115,17 +116,20 @@ def _spec_critique_prompt(task: str, spec: str) -> str:
     )
 
 
-def _planner_prompt(spec: str, summary: str) -> str:
+def _planner_prompt(spec: str, summary: str, cfg: Config) -> str:
+    gates_ctx = _format_gates_context(cfg)
     return (
         "Decompose the APPROVED SPEC below into a strict-JSON DAG per your "
         "instructions. Build from the spec, not from a raw task. Output ONLY the "
         "JSON object.\n\n"
         f"APPROVED SPEC:\n{spec}\n\n"
-        f"REPO RECON SUMMARY:\n{summary}\n"
+        f"REPO RECON SUMMARY:\n{summary}\n\n"
+        f"{gates_ctx}\n"
     )
 
 
-def _plan_critique_prompt(spec: str, plan_json: str) -> str:
+def _plan_critique_prompt(spec: str, plan_json: str, cfg: Config) -> str:
+    gates_ctx = _format_gates_context(cfg)
     return (
         "Self-critique pass on your own DAG. Re-read the plan below against the "
         "approved spec: are any acceptance criteria unaddressed? any node "
@@ -136,7 +140,8 @@ def _plan_critique_prompt(spec: str, plan_json: str) -> str:
         '  {"revised": true, "nodes": [ ...full revised node list... ]}\n'
         "When revising, emit the COMPLETE node list (same schema as before), not a diff.\n\n"
         f"APPROVED SPEC:\n{spec}\n\n"
-        f"CURRENT PLAN:\n{plan_json}\n"
+        f"CURRENT PLAN:\n{plan_json}\n\n"
+        f"{gates_ctx}\n"
     )
 
 
@@ -155,6 +160,24 @@ def _testauthor_prompt(node: Node) -> str:
 # --------------------------------------------------------------------------- #
 # helpers
 # --------------------------------------------------------------------------- #
+def _format_gates_context(cfg: Config) -> str:
+    """Format normalized repository gates for planning context.
+
+    Retains declaration order, trims each command, includes only gates with
+    non-empty trimmed commands. Returns formatted text with gate name/command
+    pairs, or explicit zero-gate statement.
+    """
+    effective = configured_gates(cfg.gates)
+
+    if not effective:
+        return "No repository-wide gates are configured for this project."
+
+    lines = ["REPOSITORY GATES (authoritative complete set):"]
+    for gate in effective:
+        lines.append(f"  {gate.name}: {gate.command}")
+    return "\n".join(lines)
+
+
 def _job_id() -> str:
     return time.strftime("%Y%m%d-%H%M%S")
 
@@ -328,7 +351,7 @@ def _stage_bc_decompose(
     pl = run_agent(
         agent="planner",
         model=cfg.model_for("planner"),
-        message=_planner_prompt(spec, summary),
+        message=_planner_prompt(spec, summary, cfg),
         cwd=repo,
         log_path=logs / f"{prog.job_id}-planner.jsonl",
         timeout=cfg.node_timeout,
@@ -363,7 +386,7 @@ def _critique_plan(
     cr = run_agent(
         agent="planner",
         model=cfg.model_for("planner"),
-        message=_plan_critique_prompt(spec, plan.to_json()),
+        message=_plan_critique_prompt(spec, plan.to_json(), cfg),
         cwd=repo,
         log_path=logs / f"{prog.job_id}-plan-critique.jsonl",
         timeout=cfg.node_timeout,

@@ -23,6 +23,7 @@ from director.config import load_file  # noqa: E402
 _ROOT = Path(__file__).resolve().parent.parent
 _CONFIG_EXAMPLE = _ROOT / "director" / "config.example.toml"
 _PLANNER_MD = _ROOT / "director" / "agent_templates" / "planner.md"
+_EXPLORER_MD = _ROOT / "director" / "agent_templates" / "explorer.md"
 
 
 class ConfigExampleRoundTripTest(unittest.TestCase):
@@ -97,15 +98,17 @@ class ConfigExampleNeutralityCommentsTest(unittest.TestCase):
             "config.example.toml must contain a commented Rust alternative: 'cargo test'",
         )
 
-    def test_commented_ignore_key_documented(self):
-        """A commented ignore key must document the optional gates.ignore list."""
-        # Spec: "Add a commented line documenting the new optional list-valued key
-        # inside [gates]: # ignore = [...]  # extra byproduct globs ..."
+    def test_repository_ignore_key_documented(self):
+        """Repository byproduct patterns live outside the command-gate table."""
         self.assertIn(
-            "# ignore",
+            "[repository]",
             self.text,
-            "config.example.toml must contain a commented '# ignore' line "
-            "documenting the optional gates.ignore key",
+            "config.example.toml must document the [repository] settings table",
+        )
+        self.assertIn(
+            "ignore = [",
+            self.text,
+            "config.example.toml must document repository ignore patterns",
         )
 
     def test_commented_target_block_present(self):
@@ -120,14 +123,19 @@ class ConfigExampleNeutralityCommentsTest(unittest.TestCase):
 
     def test_target_block_not_active(self):
         """The [target] block must remain commented — no active [target] section."""
-        # Spec: "The [target] block MUST stay commented out so the file round-trips
-        # through load_file unchanged."
         for line in self.text.splitlines():
             if line.strip() == "[target]":
                 self.fail(
                     "Found an active '[target]' section in config.example.toml — "
                     "it must remain commented so load_file round-trips cleanly"
                 )
+
+
+class ExplorerGateVocabularyTest(unittest.TestCase):
+    def test_explorer_does_not_infer_fixed_repository_gate_categories(self):
+        text = _EXPLORER_MD.read_text(encoding="utf-8")
+        self.assertNotIn("test/lint/", text)
+        self.assertIn("Do not infer", text)
 
 
 class PlannerTemplateNeutralityTest(unittest.TestCase):

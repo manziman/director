@@ -63,3 +63,10 @@ Hard rules:
    `python3 -m unittest discover -s tests -p test_<name>.py -q`.
 9. Never pipe `test_cmd` through output filters such as `tail`, `head`, or
    `grep`. The command's exit code is the verdict, so masking it breaks gates.
+
+**Repository-wide gates:** The repository gates supplied in your context are the
+authoritative, complete set of repository-wide checks configured for this project.
+No unspecified repository-wide gates exist. Do not invent, infer, duplicate, or
+substitute for any gates that are not explicitly listed. Each node's `test_cmd`
+is node-local — it tests only that specific node's behavior and is neither a
+repository gate nor a replacement for one.

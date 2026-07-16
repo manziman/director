@@ -350,6 +350,10 @@ class RenderConfigTests(unittest.TestCase):
         self.assertIn("[tiers]", text)
         self.assertIn("[gates]", text)
 
+    def test_empty_gates_omit_optional_table(self):
+        text = init.render_config({"planner": "anthropic/claude-opus-4"}, {})
+        self.assertNotIn("[gates]", text)
+
     def test_roundtrips_through_tomllib(self):
         tiers = {"planner": "anthropic/claude-opus-4"}
         gates = {"test": "", "lint": "ruff check ."}
@@ -427,38 +431,38 @@ class RunInitTests(unittest.TestCase):
             path = init.run_init(str(self.tmp))
         return path, buf.getvalue(), fi
 
-    def _menu_answers(self, gate_answers):
-        # one numeric selection per role (always pick model #1) then the gates.
-        return ["1"] * len(ROLES) + list(gate_answers)
+    def _menu_answers(self, gates):
+        # One model selection per role, then name/command pairs and a blank name.
+        gate_answers = [part for pair in gates for part in pair]
+        return ["1"] * len(ROLES) + gate_answers + [""]
 
     def test_menu_flow_writes_loadable_config(self):
         models = ["opencode/anthropic/claude-opus-4", "opencode/openai/gpt-4o"]
         path, _, _ = self._run(
             models=models,
-            answers=self._menu_answers(["", "ruff check .", ""]),
+            answers=self._menu_answers([("lint", "ruff check .")]),
         )
         self.assertEqual(path, self.cfg_path)
         self.assertTrue(self.cfg_path.exists())
         cfg = config.load_file(self.cfg_path)
         for role in ROLES:
             self.assertEqual(cfg.tiers[role], "opencode/anthropic/claude-opus-4")
-        self.assertEqual(cfg.gates["test"], "")
         self.assertEqual(cfg.gates["lint"], "ruff check .")
-        self.assertEqual(cfg.gates["typecheck"], "")
+        self.assertEqual(cfg.gates, {"lint": "ruff check ."})
 
     def test_all_six_tiers_present(self):
-        path, _, _ = self._run(models=["opencode/a/b"], answers=self._menu_answers(["", "", ""]))
+        path, _, _ = self._run(models=["opencode/a/b"], answers=self._menu_answers([]))
         cfg = config.load_file(self.cfg_path)
         self.assertEqual(set(cfg.tiers), set(ROLES))
 
     def test_creates_parent_director_dir(self):
         self.assertFalse((self.tmp / ".director").exists())
-        self._run(models=["opencode/a/b"], answers=self._menu_answers(["", "", ""]))
+        self._run(models=["opencode/a/b"], answers=self._menu_answers([]))
         self.assertTrue((self.tmp / ".director").is_dir())
 
     def test_freetext_flow_when_discovery_empty(self):
-        # empty models -> free-text per role, then 3 gates.
-        answers = [f"opencode/prov/{r}" for r in ROLES] + ["pytest", "", ""]
+        # Empty models -> free-text per role, then arbitrary name/command pairs.
+        answers = [f"opencode/prov/{r}" for r in ROLES] + ["test", "pytest", ""]
         path, out, _ = self._run(models=[], answers=answers)
         cfg = config.load_file(self.cfg_path)
         for role in ROLES:
@@ -498,7 +502,7 @@ class RunInitTests(unittest.TestCase):
         self.cfg_path.write_text("ORIGINAL\n")
         self._run(
             models=["opencode/a/b"],
-            answers=["y"] + self._menu_answers(["", "", ""]),
+            answers=["y"] + self._menu_answers([]),
         )
         self.assertNotEqual(self.cfg_path.read_text(), "ORIGINAL\n")
         cfg = config.load_file(self.cfg_path)
@@ -509,15 +513,30 @@ class RunInitTests(unittest.TestCase):
         self.cfg_path.write_text("ORIGINAL\n")
         self._run(
             models=["opencode/a/b"],
-            answers=["YES"] + self._menu_answers(["", "", ""]),
+            answers=["YES"] + self._menu_answers([]),
         )
         cfg = config.load_file(self.cfg_path)
         self.assertEqual(cfg.tiers["planner"], "opencode/a/b")
 
-    def test_gates_table_has_all_three_keys(self):
-        self._run(models=["opencode/a/b"], answers=self._menu_answers(["t", "l", "tc"]))
+    def test_gates_table_uses_arbitrary_names_in_entry_order(self):
+        gates = [("security", "scan"), ("build", "compile"), ("ignore", "check-ignore")]
+        self._run(models=["opencode/a/b"], answers=self._menu_answers(gates))
         cfg = config.load_file(self.cfg_path)
-        self.assertEqual(cfg.gates, {"test": "t", "lint": "l", "typecheck": "tc"})
+        self.assertEqual(cfg.gates, dict(gates))
+
+    def test_blank_gate_name_allows_zero_gates(self):
+        self._run(models=["opencode/a/b"], answers=self._menu_answers([]))
+        self.assertEqual(config.load_file(self.cfg_path).gates, {})
+
+    def test_blank_gate_command_omits_that_gate(self):
+        gates = [("lint", ""), ("verify", "check")]
+        self._run(models=["opencode/a/b"], answers=self._menu_answers(gates))
+        self.assertEqual(config.load_file(self.cfg_path).gates, {"verify": "check"})
+
+    def test_gate_names_are_serialized_as_literal_toml_keys(self):
+        gates = [("quality gate", "check-quality"), ("ci.verify", "verify")]
+        self._run(models=["opencode/a/b"], answers=self._menu_answers(gates))
+        self.assertEqual(config.load_file(self.cfg_path).gates, dict(gates))
 
 
 if __name__ == "__main__":

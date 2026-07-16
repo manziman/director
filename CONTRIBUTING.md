@@ -41,8 +41,9 @@ into a single Conventional Commit before opening a PR. Agents: see
 - **Roles, never models.** Code, prompts, and logs refer to roles (`planner`, `executor`,
   `reviewer`, …) — never to a specific model or to "local"/"cloud". Model strings live in
   `.director/config.toml` only.
-- **Deterministic gates decide merges.** Exit codes (tests/lint/typecheck), never an LLM's
-  opinion. LLM review is advisory or cost-gated, layered *after* the deterministic gate.
+- **Deterministic gates decide merges.** Exit codes from the repository's configured
+  commands, never an LLM's opinion. LLM review is advisory or cost-gated, layered
+  *after* the deterministic gate.
 - **`ruff` is the linter + formatter.** CI enforces both `ruff check` and `ruff format --check`.
 
 ## Commit messages → automated releases

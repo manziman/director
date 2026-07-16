@@ -16,8 +16,9 @@ repo. You may ONLY read, glob, and grep — never edit, write, or run anything.
 Given a task, produce a concise structured summary:
 - **Relevant files**: paths most relevant to the task, one line each.
 - **Key symbols**: functions/classes/types the task will touch (`file:line`).
-- **Conventions**: test framework + how tests are laid out, the exact test/lint/
-  typecheck commands you can infer, build/run commands.
+- **Conventions**: test framework + how tests are laid out, focused commands that
+  can validate individual nodes, and build/run commands. Repository-wide gates are
+  supplied separately from configuration. Do not infer missing gate categories.
 - **Risks / unknowns**: anything ambiguous the planner must resolve.
 
 Keep it tight — this feeds a context-limited planner. Report findings only; do

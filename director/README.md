@@ -12,7 +12,7 @@ director plan "<task>" --auto --no-critique   # gates auto-pass, fully hands-off
 director run [--repo .] [--parallel N] [--max-attempts K]
 director status [--repo .]
 director bench "<task>" --profiles all-frontier,cheap-cloud,local-first [--plan-profile P]
-director init [--repo .]                      # interactively create .director/config.toml (per-role models + gate commands)
+director init [--repo .]                      # create config (per-role models + optional repo-local gates)
 director sync-agents [--repo .]               # (re)install role agents into <repo>/.opencode (+ gitignore, starter opencode.json) — only for opencode tiers
 ```
 
@@ -58,7 +58,7 @@ self-critic are mechanically the same gate — only the approver differs.
    (fresh OpenCode context each attempt). Exhausted → retry the SAME node once at
    the `escalation` tier (never the whole job).
 6. Pass → commit + merge into the job branch; mark done in `.director/state.json`.
-   After all nodes: an **integration gate** runs the repo-wide suite/lint/typecheck.
+   After all nodes: an **integration gate** runs every configured repository gate.
 
 Each node's transcript is also checked for **watch-it-fail** (Phase 3 §1): did the
 executor run the failing tests *before* its first edit? This is advisory (the
@@ -95,10 +95,11 @@ remaining model ref is passed to that tool (`opencode/lmstudio/qwen` becomes
 `opencode run --model lmstudio/qwen`, while `claude-code/opus` becomes
 `claude --model opus`). Code/logs name only roles, so **switching executor models is
 a config edit, never a code change.** `director init` interactively creates
-`.director/config.toml`, asking which model to use per role and what your gate
-commands are; `sync-agents` only installs the role agents (plus a gitignore and a
-starter `opencode.json`) and no longer writes the config. See the bundled
-`config.example.toml` for the full/advanced schema.
+`.director/config.toml`, asking which model to use per role and, for repo-local
+config only, whether to add gate commands. The `[gates]` table is optional;
+user-level gate commands are ignored. `sync-agents` only installs the role agents
+(plus a gitignore and a starter `opencode.json`) and no longer writes the config.
+See the bundled `config.example.toml` for the full/advanced schema.
 For `bench`, create
 `.director/profiles/<name>.toml` variants (copy `config.toml`, change the executor tier).
 
@@ -107,10 +108,10 @@ For `bench`, create
 - **Tests live on the job branch**, not a separate `director/tests-<id>` branch
   (dependent nodes need both the tests and prior nodes' impls; one branch is
   simpler and equivalent).
-- **The full repo-wide test suite is the *integration* gate, not a per-node gate.**
-  Sibling nodes' tests are intentionally red until their own node runs, so a
-  per-node full-suite gate would always fail mid-DAG. Per node we gate on
-  `node.test_cmd` + allowlist; the full suite/lint/typecheck run once after merge.
+- **Configured repository gates are integration gates, not per-node gates.**
+  Sibling nodes' tests are intentionally red until their own node runs, so
+  repository-wide commands may fail mid-DAG. Per node we gate on
+  `node.test_cmd` + allowlist; configured repository gates run once after merge.
 
 ## Persistence (`.director/`, all resumable/debuggable)
 

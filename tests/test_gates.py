@@ -227,5 +227,64 @@ class TestGatesSource(unittest.TestCase):
         self.assertIn("timed_out", names)
 
 
+class TestUserDefinedIntegrationGates(unittest.TestCase):
+    def test_configured_gates_create_reusable_gate_values(self):
+        configured = gates.configured_gates(
+            {"security": " scan ", "disabled": "  ", "verify": "check"}
+        )
+        self.assertIsInstance(configured, tuple)
+        self.assertEqual(
+            configured,
+            (
+                gates.Gate(name="security", command="scan"),
+                gates.Gate(name="verify", command="check"),
+            ),
+        )
+
+    def test_generic_runner_accepts_gate_values_without_config(self):
+        configured = (
+            gates.Gate(name="security", command="scan"),
+            gates.Gate(name="verify", command="check"),
+        )
+        with mock.patch.object(gates, "_run", side_effect=[(0, "ok"), (7, "bad")]) as run:
+            result = gates.run_gates(configured, Path("/repo"), timeout=42)
+
+        self.assertEqual(result.failures, ["verify"])
+        self.assertIn("$ check\nbad", result.detail)
+        self.assertEqual(run.call_count, 2)
+
+    def test_runs_configured_gates_in_order_and_reports_configured_name(self):
+        cfg = types.SimpleNamespace(
+            node_timeout=42,
+            gates={
+                "security": "  scan --strict  ",
+                "disabled": "   ",
+                "verify": "check-all",
+            },
+        )
+        with mock.patch.object(gates, "_run", side_effect=[(0, "ok"), (7, "bad")]) as run:
+            result = gates.integration_gate(Path("/repo"), cfg)
+
+        self.assertEqual(
+            run.call_args_list,
+            [
+                mock.call("scan --strict", Path("/repo"), 42),
+                mock.call("check-all", Path("/repo"), 42),
+            ],
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.failures, ["verify"])
+        self.assertIn("$ check-all\nbad", result.detail)
+
+    def test_zero_configured_gates_succeeds_without_running_commands(self):
+        cfg = types.SimpleNamespace(node_timeout=42, gates={})
+        with mock.patch.object(gates, "_run") as run:
+            result = gates.integration_gate(Path("/repo"), cfg)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.failures, [])
+        run.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
