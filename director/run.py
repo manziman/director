@@ -24,7 +24,7 @@ from pathlib import Path
 from director import dag, gitutil, proc, setup
 from director.config import Config
 from director.cost import CostLedger, cost_of
-from director.gates import GateResult, integration_gate, node_gate
+from director.gates import GateResult, gate_failure_detail, integration_gate, node_gate
 from director.metrics import MetricsWriter
 from director.models import DONE, ESCALATED, FAILED, RUNNING, Node, Plan
 from director.opencode import run_agent, watch_it_fail
@@ -95,7 +95,9 @@ def _process_node(
     node: Node, worktree: Path, cfg: Config, logs: Path, max_attempts: int, log
 ) -> NodeOutcome:
     """Run the attempt/escalation ladder inside an already-created worktree."""
-    feedback = _run_shell(node.test_cmd, worktree, cfg.node_timeout)[-3000:]
+    feedback = gate_failure_detail(
+        node.test_cmd, _run_shell(node.test_cmd, worktree, cfg.node_timeout)
+    )
     tokens_sum = {"input": 0, "output": 0}
     calls: list = []
     attempts = 0
@@ -105,6 +107,7 @@ def _process_node(
     review_summary: str | None = None
     wif: dict = {}  # watch-it-fail verdict of the implementing attempt
     flake_failed = False
+    last_failure = ""
 
     for i, (tier, model) in enumerate(_attempt_tiers(cfg, max_attempts)):
         if tier == "executor":
@@ -136,7 +139,8 @@ def _process_node(
                 flake_failed = True
             reason = res.error or ("timeout" if res.timed_out else "; ".join(gate.failures))
             log(f"[run] {node.id} fail ({reason}) at {tier}")
-            feedback = (gate.detail or reason)[-3000:]
+            last_failure = gate.summary or reason
+            feedback = gate.detail or last_failure
             continue
 
         # deterministic gate passed → two-stage review (cost-gated) before merge
@@ -148,6 +152,7 @@ def _process_node(
         if review.blocking:
             review_blocks += 1
             feedback = review.detail[-3000:]
+            last_failure = review.summary or "blocked by code review"
             continue  # a critical finding re-opens the node (counts against attempts)
 
         wif = attempt_wif.__dict__
@@ -181,7 +186,7 @@ def _process_node(
         None,
         tokens_sum,
         calls,
-        f"exhausted: {feedback[:200]}",
+        f"exhausted: {last_failure or feedback[:200]}",
         worktree,
         review_stage_two,
         review_blocks,

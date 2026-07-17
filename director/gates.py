@@ -16,6 +16,7 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import os
+import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,6 +36,7 @@ class GateResult:
     ok: bool
     failures: list[str] = field(default_factory=list)
     detail: str = ""
+    summary: str = ""
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,72 @@ class Gate:
 
     name: str
     command: str
+
+
+_GATE_OUTPUT_LIMIT = 2_000
+_DIAGNOSTIC_PATH = re.compile(
+    r"""(?<![A-Za-z0-9_./-])
+    (?P<path>
+        (?:[A-Za-z]:)?(?:\.{1,2}/|/)?
+        (?:[A-Za-z0-9_@+=,;.-]+/)*[A-Za-z0-9_@+=,;.-]+
+    )
+    (?=:\d+(?::\d+)?\b|\(\d+(?:,\d+)?\))""",
+    re.VERBOSE,
+)
+
+
+def _head_output(output: str, limit: int = _GATE_OUTPUT_LIMIT) -> str:
+    """Keep the beginning of gate output, where commands usually print context."""
+    if len(output) <= limit:
+        return output
+    return output[:limit].rstrip() + "\n[output truncated]"
+
+
+def gate_failure_detail(command: str, output: str) -> str:
+    """Render command plus the useful beginning of a failing gate's output."""
+    return f"$ {command}\n{_head_output(output)}"
+
+
+def _diagnostic_paths(output: str, allowed: set[str]) -> list[str]:
+    """Extract path-like locations from diagnostic output without tool-specific parsers."""
+    paths: list[str] = []
+    for match in _DIAGNOSTIC_PATH.finditer(output):
+        path = match.group("path")
+        normalized = path.removeprefix("./")
+        # A bare word at a location can be an error code. Treat it as a file only
+        # when it is a declared path; slash/dot paths are independently useful.
+        if "/" not in normalized and "." not in normalized and normalized not in allowed:
+            continue
+        if normalized not in paths:
+            paths.append(normalized)
+    return paths
+
+
+def _is_allowed_diagnostic(path: str, allowed: set[str]) -> bool:
+    """Allow absolute diagnostic paths that unambiguously end at an allowed file."""
+    return any(path == candidate or path.endswith("/" + candidate) for candidate in allowed)
+
+
+def gate_failure_summary(node: Node, output: str) -> str:
+    """Describe whether a failed node gate appears reachable from its allowlist."""
+    allowed = {path.removeprefix("./") for path in node.files}
+    paths = _diagnostic_paths(output, allowed)
+    outside = [path for path in paths if not _is_allowed_diagnostic(path, allowed)]
+    first_line = next((line.strip() for line in output.splitlines() if line.strip()), "(no output)")
+    context = f"$ {node.test_cmd}: {first_line[:240]}"
+
+    if outside:
+        return (
+            "gate reported diagnostics outside this node's allowlist "
+            f"({', '.join(outside[:3])}) — likely a project-wide gate or pre-existing "
+            f"baseline error. {context}"
+        )
+    if paths:
+        return f"gate reported diagnostics within this node's allowlist. {context}"
+    return (
+        "gate failed with no identifiable diagnostic file paths — scope is project-wide "
+        f"or unknown-scope. {context}"
+    )
 
 
 # Dogfood / last-resort safety net so director's own Python byproducts stay clean
@@ -139,7 +207,7 @@ def run_gates(gates: Iterable[Gate], cwd: Path, timeout: int) -> GateResult:
         rc, out = _run(gate.command, cwd, timeout)
         if rc != 0:
             failures.append(gate.name)
-            detail.append(f"$ {gate.command}\n{out[-2000:]}")
+            detail.append(gate_failure_detail(gate.command, out))
     return GateResult(not failures, failures, "\n".join(detail))
 
 
@@ -175,8 +243,12 @@ def node_gate(node: Node, worktree: Path, cfg: Config) -> GateResult:
     rc, out = _run(node.test_cmd, worktree, timeout)
     if rc != 0:
         failures.append("node tests")
-        detail.append(f"$ {node.test_cmd}\n{out}")
-        return GateResult(False, failures, "\n".join(detail))
+        return GateResult(
+            False,
+            failures,
+            gate_failure_detail(node.test_cmd, out),
+            gate_failure_summary(node, out),
+        )
 
     # allowlist: only node.files may have changed (tests are committed → any edit
     # to them shows as out-of-scope and is rejected here)
@@ -204,7 +276,10 @@ def node_gate(node: Node, worktree: Path, cfg: Config) -> GateResult:
                 False,
                 ["flaky tests"],
                 f"Tests passed once but FAILED on re-run {i}/{cfg.flake_runs} — "
-                f"the suite is flaky and the node cannot merge.\n$ {node.test_cmd}\n{out2}",
+                "the suite is flaky and the node cannot merge.\n"
+                + gate_failure_detail(node.test_cmd, out2),
+                "tests passed once but failed on re-run — the node is flaky. "
+                + gate_failure_summary(node, out2),
             )
 
     return GateResult(True)
