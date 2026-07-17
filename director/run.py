@@ -25,6 +25,7 @@ from director import dag, gitutil, proc, setup
 from director.config import Config
 from director.cost import CostLedger, cost_of
 from director.gates import GateResult, gate_failure_detail, integration_gate, node_gate
+from director.guidance import RepositoryGuidance
 from director.metrics import MetricsWriter
 from director.models import DONE, ESCALATED, FAILED, RUNNING, Node, Plan
 from director.opencode import run_agent, watch_it_fail
@@ -59,7 +60,7 @@ class NodeOutcome:
     flake_failed: bool = False  # a flake re-run failed this node on some attempt
 
 
-def _executor_message(node: Node, worktree: Path, feedback: str) -> str:
+def _executor_message(node: Node, worktree: Path, feedback: str, guidance_context: str = "") -> str:
     parts = [f"Implement node '{node.id}' — {node.title}.", "", "SPEC:", node.spec, ""]
     parts.append("FILES YOU MAY EDIT (allowlist — touch nothing else):")
     for f in node.files:
@@ -71,6 +72,8 @@ def _executor_message(node: Node, worktree: Path, feedback: str) -> str:
         "",
         "CURRENT FAILING TEST OUTPUT:",
         feedback,
+        "",
+        guidance_context,
         "",
     ]
     parts.append(
@@ -92,7 +95,13 @@ def _attempt_tiers(cfg: Config, max_attempts: int) -> list[tuple[str, str]]:
 
 
 def _process_node(
-    node: Node, worktree: Path, cfg: Config, logs: Path, max_attempts: int, log
+    node: Node,
+    worktree: Path,
+    cfg: Config,
+    logs: Path,
+    max_attempts: int,
+    log,
+    guidance: RepositoryGuidance | None = None,
 ) -> NodeOutcome:
     """Run the attempt/escalation ladder inside an already-created worktree."""
     feedback = gate_failure_detail(
@@ -119,7 +128,12 @@ def _process_node(
         res = run_agent(
             agent="executor",
             model=model,
-            message=_executor_message(node, worktree, feedback),
+            message=_executor_message(
+                node,
+                worktree,
+                feedback,
+                guidance.for_files([*node.files, *node.tests]) if guidance else "",
+            ),
             cwd=worktree,
             log_path=logs / f"{node.id}-{tier}-{i}.jsonl",
             timeout=cfg.node_timeout,
@@ -144,7 +158,7 @@ def _process_node(
             continue
 
         # deterministic gate passed → two-stage review (cost-gated) before merge
-        review = review_node(node, worktree, cfg, logs, log, escalated=escalated)
+        review = review_node(node, worktree, cfg, logs, log, escalated=escalated, guidance=guidance)
         calls.extend(review.calls)
         review_stage_two = review_stage_two or review.stage_two_ran
         if review.summary:
@@ -198,6 +212,7 @@ def _process_node(
 
 def run_job(repo: str, cfg: Config, parallel: int, max_attempts: int, log) -> dict:
     repo = Path(repo).resolve()
+    guidance = RepositoryGuidance.discover(repo)
     fdir = repo / ".director"
     setup.ensure_director_gitignore(repo)  # never let `git add -A` commit generated .director files
     plan = Plan.from_json((fdir / "plan.json").read_text())
@@ -246,7 +261,7 @@ def run_job(repo: str, cfg: Config, parallel: int, max_attempts: int, log) -> di
             state[node_id].worktree = str(wt)
             state.save()
         node_t0 = time.perf_counter()
-        outcome = _process_node(node, wt, cfg, logs, max_attempts, log)
+        outcome = _process_node(node, wt, cfg, logs, max_attempts, log, guidance)
         outcome.wall_secs = round(time.perf_counter() - node_t0, 1)
         return outcome
 

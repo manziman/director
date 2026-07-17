@@ -21,5 +21,9 @@ Given a task, produce a concise structured summary:
   supplied separately from configuration. Do not infer missing gate categories.
 - **Risks / unknowns**: anything ambiguous the planner must resolve.
 
+Treat injected repository coding guidance as authoritative. Identify the guidance
+that applies to the relevant paths and call out requirements it imposes, including
+required test types or established helpers to reuse.
+
 Keep it tight — this feeds a context-limited planner. Report findings only; do
 not propose a plan or implementation. Never speculate about code you did not read.

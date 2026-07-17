@@ -31,6 +31,7 @@ from director.config import Config
 from director.cost import CostLedger
 from director.dag import topo_order, validate
 from director.gates import configured_gates
+from director.guidance import RepositoryGuidance
 from director.models import Node, Plan
 from director.opencode import run_agent
 from director.setup import sync_agents
@@ -87,23 +88,23 @@ class PlanResult:
 # --------------------------------------------------------------------------- #
 # prompts
 # --------------------------------------------------------------------------- #
-def _explorer_prompt(task: str) -> str:
+def _explorer_prompt(task: str, guidance_context: str = "") -> str:
     return (
         f"Recon for this task — read-only. Produce the relevant-files summary "
-        f"per your instructions.\n\nTASK:\n{task}"
+        f"per your instructions.\n\nTASK:\n{task}\n\n{guidance_context}"
     )
 
 
-def _brainstorm_prompt(task: str, summary: str) -> str:
+def _brainstorm_prompt(task: str, summary: str, guidance_context: str = "") -> str:
     return (
         "Produce the design spec for this task per your instructions. Output ONLY "
         "the spec Markdown.\n\n"
         f"TASK:\n{task}\n\n"
-        f"REPO RECON SUMMARY:\n{summary}\n"
+        f"REPO RECON SUMMARY:\n{summary}\n\n{guidance_context}\n"
     )
 
 
-def _spec_critique_prompt(task: str, spec: str) -> str:
+def _spec_critique_prompt(task: str, spec: str, guidance_context: str = "") -> str:
     return (
         "Self-critique pass. Silently re-read the spec below against the ORIGINAL "
         "request and note anything missing, ambiguous, or contradictory. Then output "
@@ -112,11 +113,11 @@ def _spec_critique_prompt(task: str, spec: str) -> str:
         "at its `# Spec:` heading. Do NOT include your critique notes, a changelog, "
         "or any preamble — the output replaces the spec file verbatim.\n\n"
         f"ORIGINAL REQUEST:\n{task}\n\n"
-        f"CURRENT SPEC:\n{spec}\n"
+        f"CURRENT SPEC:\n{spec}\n\n{guidance_context}\n"
     )
 
 
-def _planner_prompt(spec: str, summary: str, cfg: Config) -> str:
+def _planner_prompt(spec: str, summary: str, cfg: Config, guidance_context: str = "") -> str:
     gates_ctx = _format_gates_context(cfg)
     return (
         "Decompose the APPROVED SPEC below into a strict-JSON DAG per your "
@@ -124,11 +125,13 @@ def _planner_prompt(spec: str, summary: str, cfg: Config) -> str:
         "JSON object.\n\n"
         f"APPROVED SPEC:\n{spec}\n\n"
         f"REPO RECON SUMMARY:\n{summary}\n\n"
-        f"{gates_ctx}\n"
+        f"{gates_ctx}\n\n{guidance_context}\n"
     )
 
 
-def _plan_critique_prompt(spec: str, plan_json: str, cfg: Config) -> str:
+def _plan_critique_prompt(
+    spec: str, plan_json: str, cfg: Config, guidance_context: str = ""
+) -> str:
     gates_ctx = _format_gates_context(cfg)
     return (
         "Self-critique pass on your own DAG. Re-read the plan below against the "
@@ -141,11 +144,11 @@ def _plan_critique_prompt(spec: str, plan_json: str, cfg: Config) -> str:
         "When revising, emit the COMPLETE node list (same schema as before), not a diff.\n\n"
         f"APPROVED SPEC:\n{spec}\n\n"
         f"CURRENT PLAN:\n{plan_json}\n\n"
-        f"{gates_ctx}\n"
+        f"{gates_ctx}\n\n{guidance_context}\n"
     )
 
 
-def _testauthor_prompt(node: Node) -> str:
+def _testauthor_prompt(node: Node, guidance_context: str = "") -> str:
     return (
         "Write acceptance tests for exactly this node, in the listed test file(s), "
         "and nothing else. Confirm they FAIL before implementation exists.\n\n"
@@ -153,7 +156,7 @@ def _testauthor_prompt(node: Node) -> str:
         f"SPEC:\n{node.spec}\n\n"
         f"TEST FILE(S) TO CREATE: {', '.join(node.tests)}\n"
         f"IMPLEMENTATION FILES (do NOT create/implement these): {', '.join(node.files)}\n"
-        f"The test command will be: {node.test_cmd}\n"
+        f"The test command will be: {node.test_cmd}\n\n{guidance_context}\n"
     )
 
 
@@ -221,12 +224,20 @@ def _build_plan(data: dict, prog: PlanProgress, repo: Path) -> Plan:
 # --------------------------------------------------------------------------- #
 # stages
 # --------------------------------------------------------------------------- #
-def _recon(prog: PlanProgress, repo: Path, cfg: Config, ledger: CostLedger, logs: Path, log) -> str:
+def _recon(
+    prog: PlanProgress,
+    repo: Path,
+    cfg: Config,
+    ledger: CostLedger,
+    logs: Path,
+    log,
+    guidance: RepositoryGuidance | None = None,
+) -> str:
     log(f"[plan] explorer recon ({cfg.model_for('explorer')}) …")
     ex = run_agent(
         agent="explorer",
         model=cfg.model_for("explorer"),
-        message=_explorer_prompt(prog.task),
+        message=_explorer_prompt(prog.task, guidance.for_planning() if guidance else ""),
         cwd=repo,
         log_path=logs / f"{prog.job_id}-explorer.jsonl",
         timeout=cfg.node_timeout,
@@ -240,13 +251,20 @@ def _recon(prog: PlanProgress, repo: Path, cfg: Config, ledger: CostLedger, logs
 
 
 def _stage_a_spec(
-    prog: PlanProgress, repo: Path, cfg: Config, summary: str, ledger: CostLedger, logs: Path, log
+    prog: PlanProgress,
+    repo: Path,
+    cfg: Config,
+    summary: str,
+    ledger: CostLedger,
+    logs: Path,
+    log,
+    guidance: RepositoryGuidance | None = None,
 ) -> None:
     log(f"[plan] Stage A brainstorm/spec ({cfg.model_for('planner')}) …")
     bs = run_agent(
         agent="brainstorm",
         model=cfg.model_for("planner"),
-        message=_brainstorm_prompt(prog.task, summary),
+        message=_brainstorm_prompt(prog.task, summary, guidance.for_planning() if guidance else ""),
         cwd=repo,
         log_path=logs / f"{prog.job_id}-brainstorm.jsonl",
         timeout=cfg.node_timeout,
@@ -258,14 +276,20 @@ def _stage_a_spec(
 
 
 def _critique_spec(
-    prog: PlanProgress, repo: Path, cfg: Config, ledger: CostLedger, logs: Path, log
+    prog: PlanProgress,
+    repo: Path,
+    cfg: Config,
+    ledger: CostLedger,
+    logs: Path,
+    log,
+    guidance: RepositoryGuidance | None = None,
 ) -> None:
     spec = (repo / ".director" / "spec.md").read_text()
     log(f"[plan] --auto: spec self-critique ({cfg.model_for('planner')}) …")
     cr = run_agent(
         agent="brainstorm",
         model=cfg.model_for("planner"),
-        message=_spec_critique_prompt(prog.task, spec),
+        message=_spec_critique_prompt(prog.task, spec, guidance.for_planning() if guidance else ""),
         cwd=repo,
         log_path=logs / f"{prog.job_id}-spec-critique.jsonl",
         timeout=cfg.node_timeout,
@@ -285,6 +309,7 @@ def _author_tests(
     log,
     *,
     prev_tests: set[str] | None = None,
+    guidance: RepositoryGuidance | None = None,
 ) -> None:
     """Stage C: test-author writes per-node tests, commit, hash, verify red.
     Idempotent — safe to re-run after a plan revision (overwrites test files)."""
@@ -296,7 +321,9 @@ def _author_tests(
         ta = run_agent(
             agent="test-author",
             model=cfg.model_for("test_author"),
-            message=_testauthor_prompt(node),
+            message=_testauthor_prompt(
+                node, guidance.for_files([*node.files, *node.tests]) if guidance else ""
+            ),
             cwd=repo,
             log_path=logs / f"{plan.job_id}-tests-{node.id}.jsonl",
             timeout=cfg.node_timeout,
@@ -338,7 +365,13 @@ def _author_tests(
 
 
 def _stage_bc_decompose(
-    prog: PlanProgress, repo: Path, cfg: Config, ledger: CostLedger, logs: Path, log
+    prog: PlanProgress,
+    repo: Path,
+    cfg: Config,
+    ledger: CostLedger,
+    logs: Path,
+    log,
+    guidance: RepositoryGuidance | None = None,
 ) -> Plan:
     summary = (
         (repo / ".director" / "recon.md").read_text()
@@ -351,7 +384,7 @@ def _stage_bc_decompose(
     pl = run_agent(
         agent="planner",
         model=cfg.model_for("planner"),
-        message=_planner_prompt(spec, summary, cfg),
+        message=_planner_prompt(spec, summary, cfg, guidance.for_planning() if guidance else ""),
         cwd=repo,
         log_path=logs / f"{prog.job_id}-planner.jsonl",
         timeout=cfg.node_timeout,
@@ -374,19 +407,28 @@ def _stage_bc_decompose(
     pj.write_text(plan.to_json())
     log(f"[plan] {len(plan.nodes)} nodes: {', '.join(n.id for n in plan.nodes)}")
 
-    _author_tests(plan, repo, cfg, ledger, logs, log, prev_tests=prev_tests)
+    _author_tests(plan, repo, cfg, ledger, logs, log, prev_tests=prev_tests, guidance=guidance)
     return plan
 
 
 def _critique_plan(
-    plan: Plan, prog: PlanProgress, repo: Path, cfg: Config, ledger: CostLedger, logs: Path, log
+    plan: Plan,
+    prog: PlanProgress,
+    repo: Path,
+    cfg: Config,
+    ledger: CostLedger,
+    logs: Path,
+    log,
+    guidance: RepositoryGuidance | None = None,
 ) -> Plan:
     spec = (repo / ".director" / "spec.md").read_text()
     log(f"[plan] --auto: plan self-critique ({cfg.model_for('planner')}) …")
     cr = run_agent(
         agent="planner",
         model=cfg.model_for("planner"),
-        message=_plan_critique_prompt(spec, plan.to_json(), cfg),
+        message=_plan_critique_prompt(
+            spec, plan.to_json(), cfg, guidance.for_planning() if guidance else ""
+        ),
         cwd=repo,
         log_path=logs / f"{prog.job_id}-plan-critique.jsonl",
         timeout=cfg.node_timeout,
@@ -409,7 +451,7 @@ def _critique_plan(
     validate(revised)
     (repo / ".director" / "plan.json").write_text(revised.to_json())
     prev_tests = {t for n in plan.nodes for t in n.tests}
-    _author_tests(revised, repo, cfg, ledger, logs, log, prev_tests=prev_tests)
+    _author_tests(revised, repo, cfg, ledger, logs, log, prev_tests=prev_tests, guidance=guidance)
     return revised
 
 
@@ -427,6 +469,7 @@ def run_plan(
     cont: bool = False,
 ) -> PlanResult:
     repo = Path(repo).resolve()
+    guidance = RepositoryGuidance.discover(repo)
     fdir = repo / ".director"
     logs = fdir / "logs"
     setup.ensure_director_gitignore(repo)  # never let `git add -A` commit generated .director files
@@ -478,7 +521,7 @@ def run_plan(
         gitutil.checkout(job_branch, repo)
         sync_agents(repo, cfg)
         gitutil.commit_all(f"director: scaffold agents for job {job_id}", repo)
-        _recon(prog, repo, cfg, ledger, logs, log)
+        _recon(prog, repo, cfg, ledger, logs, log, guidance)
 
     prog.auto, prog.critique = auto, critique
     plan: Plan | None = None
@@ -487,7 +530,14 @@ def run_plan(
     while True:
         if prog.stage == SPEC:
             _stage_a_spec(
-                prog, repo, cfg, (repo / ".director" / "recon.md").read_text(), ledger, logs, log
+                prog,
+                repo,
+                cfg,
+                (repo / ".director" / "recon.md").read_text(),
+                ledger,
+                logs,
+                log,
+                guidance,
             )
             prog.stage = GATE_SPEC
             prog.save(repo)
@@ -501,13 +551,13 @@ def run_plan(
                     "`director plan --continue`.",
                 )
             if critique:
-                _critique_spec(prog, repo, cfg, ledger, logs, log)
+                _critique_spec(prog, repo, cfg, ledger, logs, log, guidance)
             prog.stage = DECOMPOSE
             prog.save(repo)
             continue
 
         if prog.stage == DECOMPOSE:
-            plan = _stage_bc_decompose(prog, repo, cfg, ledger, logs, log)
+            plan = _stage_bc_decompose(prog, repo, cfg, ledger, logs, log, guidance)
             prog.stage = GATE_PLAN
             prog.save(repo)
             if not auto:
@@ -521,7 +571,7 @@ def run_plan(
                     f"files, then `director plan --continue` to enable `run`.",
                 )
             if critique:
-                plan = _critique_plan(plan, prog, repo, cfg, ledger, logs, log)
+                plan = _critique_plan(plan, prog, repo, cfg, ledger, logs, log, guidance)
             prog.stage = READY
             prog.save(repo)
             continue
