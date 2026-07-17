@@ -32,6 +32,7 @@ from director.cost import CostLedger
 from director.dag import topo_order, validate
 from director.gates import configured_gates
 from director.guidance import RepositoryGuidance
+from director.jobctx import JobContext
 from director.models import Node, Plan
 from director.opencode import run_agent
 from director.setup import sync_agents
@@ -58,18 +59,18 @@ class PlanProgress:
     critique: bool
 
     @staticmethod
-    def path(repo: Path) -> Path:
-        return Path(repo) / ".director" / "plan_stage.json"
+    def path(artifact_dir: Path) -> Path:
+        return Path(artifact_dir) / "plan_stage.json"
 
     @classmethod
-    def load(cls, repo: Path) -> PlanProgress | None:
-        p = cls.path(repo)
+    def load(cls, artifact_dir: Path) -> PlanProgress | None:
+        p = cls.path(artifact_dir)
         if not p.exists():
             return None
         return cls(**json.loads(p.read_text()))
 
-    def save(self, repo: Path) -> None:
-        p = self.path(repo)
+    def save(self, artifact_dir: Path) -> None:
+        p = self.path(artifact_dir)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(asdict(self), indent=2))
 
@@ -209,12 +210,12 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _build_plan(data: dict, prog: PlanProgress, repo: Path) -> Plan:
+def _build_plan(data: dict, prog: PlanProgress, workspace: Path) -> Plan:
     nodes = [Node.from_dict(n) for n in data["nodes"]]
     return Plan(
         job_id=prog.job_id,
         task=prog.task,
-        repo=str(repo),
+        repo=str(workspace),
         created_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
         job_branch=prog.job_branch,
         nodes=nodes,
@@ -226,7 +227,7 @@ def _build_plan(data: dict, prog: PlanProgress, repo: Path) -> Plan:
 # --------------------------------------------------------------------------- #
 def _recon(
     prog: PlanProgress,
-    repo: Path,
+    ctx: JobContext,
     cfg: Config,
     ledger: CostLedger,
     logs: Path,
@@ -238,7 +239,7 @@ def _recon(
         agent="explorer",
         model=cfg.model_for("explorer"),
         message=_explorer_prompt(prog.task, guidance.for_planning() if guidance else ""),
-        cwd=repo,
+        cwd=ctx.workspace,
         log_path=logs / f"{prog.job_id}-explorer.jsonl",
         timeout=cfg.node_timeout,
     )
@@ -246,13 +247,13 @@ def _recon(
     if not ex.ok:
         raise RuntimeError(f"explorer failed: {ex.error or ex.returncode} (see {ex.log_path})")
     summary = ex.text or "(no summary)"
-    (repo / ".director" / "recon.md").write_text(summary)
+    (ctx.artifact_dir / "recon.md").write_text(summary)
     return summary
 
 
 def _stage_a_spec(
     prog: PlanProgress,
-    repo: Path,
+    ctx: JobContext,
     cfg: Config,
     summary: str,
     ledger: CostLedger,
@@ -265,44 +266,44 @@ def _stage_a_spec(
         agent="brainstorm",
         model=cfg.model_for("planner"),
         message=_brainstorm_prompt(prog.task, summary, guidance.for_planning() if guidance else ""),
-        cwd=repo,
+        cwd=ctx.workspace,
         log_path=logs / f"{prog.job_id}-brainstorm.jsonl",
         timeout=cfg.node_timeout,
     )
     ledger.record(role="planner", model=cfg.model_for("planner"), tokens=bs.tokens, cfg=cfg)
     if not bs.ok or not bs.text.strip():
         raise RuntimeError(f"brainstorm failed: {bs.error or bs.returncode} (see {bs.log_path})")
-    (repo / ".director" / "spec.md").write_text(bs.text.strip() + "\n")
+    (ctx.artifact_dir / "spec.md").write_text(bs.text.strip() + "\n")
 
 
 def _critique_spec(
     prog: PlanProgress,
-    repo: Path,
+    ctx: JobContext,
     cfg: Config,
     ledger: CostLedger,
     logs: Path,
     log,
     guidance: RepositoryGuidance | None = None,
 ) -> None:
-    spec = (repo / ".director" / "spec.md").read_text()
+    spec = (ctx.artifact_dir / "spec.md").read_text()
     log(f"[plan] --auto: spec self-critique ({cfg.model_for('planner')}) …")
     cr = run_agent(
         agent="brainstorm",
         model=cfg.model_for("planner"),
         message=_spec_critique_prompt(prog.task, spec, guidance.for_planning() if guidance else ""),
-        cwd=repo,
+        cwd=ctx.workspace,
         log_path=logs / f"{prog.job_id}-spec-critique.jsonl",
         timeout=cfg.node_timeout,
     )
     ledger.record(role="planner", model=cfg.model_for("planner"), tokens=cr.tokens, cfg=cfg)
     if cr.ok and cr.text.strip():
-        (repo / ".director" / "spec.md").write_text(cr.text.strip() + "\n")
+        (ctx.artifact_dir / "spec.md").write_text(cr.text.strip() + "\n")
         log("[plan] spec revised by self-critique.")
 
 
 def _author_tests(
     plan: Plan,
-    repo: Path,
+    ctx: JobContext,
     cfg: Config,
     ledger: CostLedger,
     logs: Path,
@@ -313,6 +314,7 @@ def _author_tests(
 ) -> None:
     """Stage C: test-author writes per-node tests, commit, hash, verify red.
     Idempotent — safe to re-run after a plan revision (overwrites test files)."""
+    ws = ctx.workspace
     for node in [plan.node(i) for i in topo_order(plan)]:
         log(
             f"[plan] test-author: {node.id} → {', '.join(node.tests)} "
@@ -324,7 +326,7 @@ def _author_tests(
             message=_testauthor_prompt(
                 node, guidance.for_files([*node.files, *node.tests]) if guidance else ""
             ),
-            cwd=repo,
+            cwd=ws,
             log_path=logs / f"{plan.job_id}-tests-{node.id}.jsonl",
             timeout=cfg.node_timeout,
         )
@@ -340,23 +342,23 @@ def _author_tests(
     current_tests = {t for n in plan.nodes for t in n.tests}
     stale = (prev_tests or set()) - current_tests
     for rel in sorted(stale):
-        tp = repo / rel
+        tp = ws / rel
         if tp.exists():
             tp.unlink()
             log(f"[plan] pruned stale test from a prior attempt: {rel}")
-    gitutil.commit_all(f"director: acceptance tests for job {plan.job_id}", repo)
+    gitutil.commit_all(f"director: acceptance tests for job {plan.job_id}", ws)
 
     # Hash the committed test files: the node gate refuses to pass if the executor
     # later edits the contract. Captured by director, not the planner.
     for node in plan.nodes:
         node.test_hashes = {}
         for t in node.tests:
-            tp = repo / t
+            tp = ws / t
             if tp.exists():
                 node.test_hashes[t] = _sha256(tp)
-    (repo / ".director" / "plan.json").write_text(plan.to_json())
+    (ctx.artifact_dir / "plan.json").write_text(plan.to_json())
 
-    not_red = [n.id for n in plan.nodes if _run_shell(n.test_cmd, repo) == 0]
+    not_red = [n.id for n in plan.nodes if _run_shell(n.test_cmd, ws) == 0]
     if not_red:
         log(
             f"[plan] WARNING: tests did NOT fail first (not red) for: "
@@ -366,26 +368,23 @@ def _author_tests(
 
 def _stage_bc_decompose(
     prog: PlanProgress,
-    repo: Path,
+    ctx: JobContext,
     cfg: Config,
     ledger: CostLedger,
     logs: Path,
     log,
     guidance: RepositoryGuidance | None = None,
 ) -> Plan:
-    summary = (
-        (repo / ".director" / "recon.md").read_text()
-        if (repo / ".director" / "recon.md").exists()
-        else "(no recon)"
-    )
-    spec = (repo / ".director" / "spec.md").read_text()
+    fdir = ctx.artifact_dir
+    summary = (fdir / "recon.md").read_text() if (fdir / "recon.md").exists() else "(no recon)"
+    spec = (fdir / "spec.md").read_text()
 
     log(f"[plan] Stage B decompose ({cfg.model_for('planner')}) …")
     pl = run_agent(
         agent="planner",
         model=cfg.model_for("planner"),
         message=_planner_prompt(spec, summary, cfg, guidance.for_planning() if guidance else ""),
-        cwd=repo,
+        cwd=ctx.workspace,
         log_path=logs / f"{prog.job_id}-planner.jsonl",
         timeout=cfg.node_timeout,
     )
@@ -393,9 +392,9 @@ def _stage_bc_decompose(
     if not pl.ok:
         raise RuntimeError(f"planner failed: {pl.error or pl.returncode} (see {pl.log_path})")
 
-    plan = _build_plan(_extract_json(pl.text), prog, repo)
+    plan = _build_plan(_extract_json(pl.text), prog, ctx.workspace)
     validate(plan)
-    pj = repo / ".director" / "plan.json"
+    pj = fdir / "plan.json"
     if pj.exists():
         try:
             prev_tests = {t for n in Plan.from_json(pj.read_text()).nodes for t in n.tests}
@@ -407,21 +406,21 @@ def _stage_bc_decompose(
     pj.write_text(plan.to_json())
     log(f"[plan] {len(plan.nodes)} nodes: {', '.join(n.id for n in plan.nodes)}")
 
-    _author_tests(plan, repo, cfg, ledger, logs, log, prev_tests=prev_tests, guidance=guidance)
+    _author_tests(plan, ctx, cfg, ledger, logs, log, prev_tests=prev_tests, guidance=guidance)
     return plan
 
 
 def _critique_plan(
     plan: Plan,
     prog: PlanProgress,
-    repo: Path,
+    ctx: JobContext,
     cfg: Config,
     ledger: CostLedger,
     logs: Path,
     log,
     guidance: RepositoryGuidance | None = None,
 ) -> Plan:
-    spec = (repo / ".director" / "spec.md").read_text()
+    spec = (ctx.artifact_dir / "spec.md").read_text()
     log(f"[plan] --auto: plan self-critique ({cfg.model_for('planner')}) …")
     cr = run_agent(
         agent="planner",
@@ -429,7 +428,7 @@ def _critique_plan(
         message=_plan_critique_prompt(
             spec, plan.to_json(), cfg, guidance.for_planning() if guidance else ""
         ),
-        cwd=repo,
+        cwd=ctx.workspace,
         log_path=logs / f"{prog.job_id}-plan-critique.jsonl",
         timeout=cfg.node_timeout,
     )
@@ -447,11 +446,11 @@ def _critique_plan(
         return plan
 
     log("[plan] self-critique revised the DAG; re-authoring tests for the new plan.")
-    revised = _build_plan(data, prog, repo)
+    revised = _build_plan(data, prog, ctx.workspace)
     validate(revised)
-    (repo / ".director" / "plan.json").write_text(revised.to_json())
+    (ctx.artifact_dir / "plan.json").write_text(revised.to_json())
     prev_tests = {t for n in plan.nodes for t in n.tests}
-    _author_tests(revised, repo, cfg, ledger, logs, log, prev_tests=prev_tests, guidance=guidance)
+    _author_tests(revised, ctx, cfg, ledger, logs, log, prev_tests=prev_tests, guidance=guidance)
     return revised
 
 
@@ -467,14 +466,16 @@ def run_plan(
     auto: bool = False,
     critique: bool = True,
     cont: bool = False,
+    ctx: JobContext | None = None,
 ) -> PlanResult:
-    repo = Path(repo).resolve()
-    guidance = RepositoryGuidance.discover(repo)
-    fdir = repo / ".director"
-    logs = fdir / "logs"
-    setup.ensure_director_gitignore(repo)  # never let `git add -A` commit generated .director files
+    ctx = ctx or JobContext.for_repo(repo)
+    ws = ctx.workspace
+    guidance = RepositoryGuidance.discover(ws)
+    fdir = ctx.artifact_dir
+    logs = ctx.logs_dir
+    setup.ensure_director_gitignore(ws)  # never let `git add -A` commit generated .director files
     ledger = CostLedger(fdir / "costs.jsonl")
-    prog = PlanProgress.load(repo)
+    prog = PlanProgress.load(fdir)
 
     if cont:
         if prog is None:
@@ -491,19 +492,19 @@ def run_plan(
         # carry the flags chosen at start; --auto/--no-critique on --continue may override
         auto = auto or prog.auto
         critique = prog.critique if not auto else critique
-        if gitutil.current_branch(repo) != prog.job_branch:
-            gitutil.checkout(prog.job_branch, repo)
+        if gitutil.current_branch(ws) != prog.job_branch:
+            gitutil.checkout(prog.job_branch, ws)
     else:
         if prog is not None and prog.stage != READY:
             raise RuntimeError(
                 f"a plan is already in progress at stage '{prog.stage}' "
                 f"(job {prog.job_id}). Use `director plan --continue`, or remove "
-                f"{PlanProgress.path(repo)} to start over."
+                f"{PlanProgress.path(fdir)} to start over."
             )
         if not task:
             raise RuntimeError("a task description is required to start a new plan")
-        job_id = _job_id()
-        job_branch = f"director/job-{job_id}"
+        job_id = ctx.job_id or _job_id()
+        job_branch = ctx.job_branch or f"director/job-{job_id}"
         prog = PlanProgress(
             job_id=job_id,
             task=task,
@@ -514,14 +515,18 @@ def run_plan(
         )
         # Stage 0: job branch + agents BEFORE any agent call, so `--agent <role>`
         # resolves the synced role prompt instead of falling back to the default.
-        base = gitutil.current_commit(repo)
-        if gitutil.branch_exists(job_branch, repo):
-            raise RuntimeError(f"branch {job_branch} already exists")
-        gitutil.create_branch(job_branch, repo, base)
-        gitutil.checkout(job_branch, repo)
-        sync_agents(repo, cfg)
-        gitutil.commit_all(f"director: scaffold agents for job {job_id}", repo)
-        _recon(prog, repo, cfg, ledger, logs, log, guidance)
+        # Agent-job workspaces arrive already checked out on the job branch (the
+        # runner created the worktree from the captured base commit) — skip
+        # branch creation in that case.
+        if gitutil.current_branch(ws) != job_branch:
+            base = gitutil.current_commit(ws)
+            if gitutil.branch_exists(job_branch, ws):
+                raise RuntimeError(f"branch {job_branch} already exists")
+            gitutil.create_branch(job_branch, ws, base)
+            gitutil.checkout(job_branch, ws)
+        sync_agents(ws, cfg)
+        gitutil.commit_all(f"director: scaffold agents for job {job_id}", ws)
+        _recon(prog, ctx, cfg, ledger, logs, log, guidance)
 
     prog.auto, prog.critique = auto, critique
     plan: Plan | None = None
@@ -531,16 +536,16 @@ def run_plan(
         if prog.stage == SPEC:
             _stage_a_spec(
                 prog,
-                repo,
+                ctx,
                 cfg,
-                (repo / ".director" / "recon.md").read_text(),
+                (fdir / "recon.md").read_text(),
                 ledger,
                 logs,
                 log,
                 guidance,
             )
             prog.stage = GATE_SPEC
-            prog.save(repo)
+            prog.save(fdir)
             if not auto:
                 return _paused(
                     prog,
@@ -551,15 +556,15 @@ def run_plan(
                     "`director plan --continue`.",
                 )
             if critique:
-                _critique_spec(prog, repo, cfg, ledger, logs, log, guidance)
+                _critique_spec(prog, ctx, cfg, ledger, logs, log, guidance)
             prog.stage = DECOMPOSE
-            prog.save(repo)
+            prog.save(fdir)
             continue
 
         if prog.stage == DECOMPOSE:
-            plan = _stage_bc_decompose(prog, repo, cfg, ledger, logs, log, guidance)
+            plan = _stage_bc_decompose(prog, ctx, cfg, ledger, logs, log, guidance)
             prog.stage = GATE_PLAN
-            prog.save(repo)
+            prog.save(fdir)
             if not auto:
                 return _paused(
                     prog,
@@ -571,13 +576,13 @@ def run_plan(
                     f"files, then `director plan --continue` to enable `run`.",
                 )
             if critique:
-                plan = _critique_plan(plan, prog, repo, cfg, ledger, logs, log, guidance)
+                plan = _critique_plan(plan, prog, ctx, cfg, ledger, logs, log, guidance)
             prog.stage = READY
-            prog.save(repo)
+            prog.save(fdir)
             continue
 
         if prog.stage == READY:
-            prog.save(repo)
+            prog.save(fdir)
             if plan is None:
                 plan = Plan.from_json((fdir / "plan.json").read_text())
             log(

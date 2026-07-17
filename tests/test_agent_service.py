@@ -1,0 +1,150 @@
+"""Service install/uninstall/control (director/agent/service.py).
+
+Rendering is pure and asserted on content; lifecycle operations run through an
+injected fake `run` so no host service manager is ever touched.
+"""
+
+import pathlib
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+
+from director.agent import service  # noqa: E402
+
+
+class FakeRun:
+    def __init__(self, returncode=0, stdout=""):
+        self.calls: list[list[str]] = []
+        self.returncode = returncode
+        self.stdout = stdout
+
+    def __call__(self, argv):
+        self.calls.append(argv)
+        import types
+
+        return types.SimpleNamespace(returncode=self.returncode, stdout=self.stdout, stderr="")
+
+
+class RenderTests(unittest.TestCase):
+    def test_systemd_unit_shape(self):
+        unit = service.render_systemd_unit(8642)
+        self.assertIn("[Unit]", unit)
+        self.assertIn("ExecStart=", unit)
+        exec_line = next(line for line in unit.splitlines() if line.startswith("ExecStart="))
+        # absolute executable — services do not get a login PATH
+        executable = exec_line.removeprefix("ExecStart=").split()[0]
+        self.assertTrue(Path(executable).is_absolute(), exec_line)
+        self.assertIn("agent serve --host 127.0.0.1 --port 8642", unit)
+        self.assertIn("Restart=on-failure", unit)
+        self.assertIn("WantedBy=default.target", unit)
+        # secrets never go into the unit; the process loads agent.env itself
+        self.assertNotIn("Environment", unit)
+
+    def test_launchd_plist_shape(self):
+        plist = service.render_launchd_plist(9000, Path("/tmp/agent.log"))
+        self.assertIn(f"<string>{service.LAUNCHD_LABEL}</string>", plist)
+        self.assertIn("<string>9000</string>", plist)
+        self.assertIn("<key>RunAtLoad</key>", plist)
+        self.assertIn("<key>KeepAlive</key>", plist)
+        self.assertIn("<key>SuccessfulExit</key>", plist)
+        self.assertIn("agent", plist)
+        first_arg = plist.split("<array>\n")[1].splitlines()[0].strip()
+        executable = first_arg.removeprefix("<string>").removesuffix("</string>")
+        self.assertTrue(Path(executable).is_absolute(), first_arg)
+
+
+class SystemdLifecycleTests(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.run = FakeRun()
+
+    def test_install_writes_unit_and_enables(self):
+        report = service.install(8642, platform="linux", home=self.home, run=self.run)
+        path = service.systemd_unit_path(self.home)
+        self.assertTrue(path.exists())
+        self.assertIn(["systemctl", "--user", "daemon-reload"], self.run.calls)
+        self.assertIn(["systemctl", "--user", "enable", service.SERVICE_NAME], self.run.calls)
+        self.assertIn(["systemctl", "--user", "restart", service.SERVICE_NAME], self.run.calls)
+        self.assertEqual(report["platform"], "linux")
+        self.assertIn("linger", report["note"])
+
+    def test_install_is_idempotent(self):
+        service.install(8642, platform="linux", home=self.home, run=self.run)
+        report = service.install(8642, platform="linux", home=self.home, run=self.run)
+        self.assertTrue(any("unchanged" in a for a in report["actions"]))
+
+    def test_install_no_start_skips_restart(self):
+        service.install(8642, start=False, platform="linux", home=self.home, run=self.run)
+        self.assertNotIn(["systemctl", "--user", "restart", service.SERVICE_NAME], self.run.calls)
+
+    def test_uninstall_removes_unit_and_is_idempotent(self):
+        service.install(8642, platform="linux", home=self.home, run=self.run)
+        service.uninstall(platform="linux", home=self.home, run=self.run)
+        self.assertFalse(service.systemd_unit_path(self.home).exists())
+        report = service.uninstall(platform="linux", home=self.home, run=self.run)
+        self.assertTrue(any("not installed" in a for a in report["actions"]))
+
+    def test_control_maps_to_systemctl(self):
+        service.control("restart", platform="linux", home=self.home, run=self.run)
+        self.assertEqual(
+            self.run.calls[-1], ["systemctl", "--user", "restart", service.SERVICE_NAME]
+        )
+
+
+class LaunchdLifecycleTests(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.run = FakeRun()
+
+    def test_install_bootstraps_launch_agent(self):
+        report = service.install(
+            8642, platform="darwin", home=self.home, agent_home=self.home, uid=501, run=self.run
+        )
+        path = service.launchd_plist_path(self.home)
+        self.assertTrue(path.exists())
+        self.assertIn(["launchctl", "bootout", "gui/501", str(path)], self.run.calls)
+        self.assertIn(["launchctl", "bootstrap", "gui/501", str(path)], self.run.calls)
+        self.assertIn(
+            ["launchctl", "kickstart", "-k", f"gui/501/{service.LAUNCHD_LABEL}"], self.run.calls
+        )
+        self.assertEqual(report["platform"], "darwin")
+
+    def test_uninstall_boots_out_and_removes(self):
+        service.install(
+            8642, platform="darwin", home=self.home, agent_home=self.home, uid=501, run=self.run
+        )
+        service.uninstall(platform="darwin", home=self.home, uid=501, run=self.run)
+        self.assertFalse(service.launchd_plist_path(self.home).exists())
+
+    def test_stop_uses_sigterm(self):
+        service.control("stop", platform="darwin", home=self.home, uid=501, run=self.run)
+        self.assertEqual(
+            self.run.calls[-1],
+            ["launchctl", "kill", "SIGTERM", f"gui/501/{service.LAUNCHD_LABEL}"],
+        )
+
+
+class PlatformTests(unittest.TestCase):
+    def test_unsupported_platform_raises_with_serve_hint(self):
+        with self.assertRaises(service.ServiceError) as ctx:
+            service.install(8642, platform="win32", run=FakeRun())
+        self.assertIn("director agent serve", str(ctx.exception))
+
+    def test_service_state_reports_unsupported(self):
+        state = service.service_state(platform="win32", run=FakeRun())
+        self.assertFalse(state["supported"])
+
+    def test_service_state_linux_not_installed(self):
+        state = service.service_state(
+            platform="linux", home=Path(tempfile.mkdtemp()), run=FakeRun()
+        )
+        self.assertEqual(
+            state, {"platform": "linux", "supported": True, "installed": False, "state": None}
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -199,7 +199,7 @@ class TestPlanSource(unittest.TestCase):
         self.assertIn("returncode", names)
 
     def test_single_caller_preserved(self):
-        self.assertIn("_run_shell(n.test_cmd, repo)", self.src)
+        self.assertIn("_run_shell(n.test_cmd, ws)", self.src)
 
 
 class TestRepositoryGatePlanningContext(unittest.TestCase):

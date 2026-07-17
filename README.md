@@ -116,9 +116,56 @@ director run
 | `director bench "<task>" --profiles a,b,c` | Run the **same** task (same frozen acceptance tests) across profile variants and diff cost / quality / wall-time. |
 | `director init [--repo .]` | Interactively create config — asks which model to use per role and, for repo-local config, optionally asks for gate commands. |
 | `director sync-agents` | (Re)install the role agents into `<repo>/.opencode/` (plus gitignore, starter `opencode.json`) — only when an `opencode/*` tier is configured. |
+| `director agent …` | Machine-local job supervisor: submit many director jobs (even against the same repo, concurrently), monitor/cancel/retry them, one dashboard for all of them, installable as a user service. See below. |
 
 All state lives under `.director/` (resumable, debuggable): `plan.json`, `state.json`,
 `costs.jsonl`, `metrics.jsonl`, per-call `logs/`, and `bench/`.
+
+## The local agent (`director agent`)
+
+`director auto` owns one job in one foreground process. The **agent** is a durable
+local supervisor for many jobs at once — built for coding-agent orchestrators that
+want to submit work, yield, and come back later:
+
+```bash
+director agent install [--port 8642]   # systemd --user unit (Linux) / LaunchAgent (macOS)
+director agent serve                   # …or run it in the foreground yourself
+
+director agent submit --repo ~/code/proj --input task.md \
+    --request-id my-id-42 --label ticket=PROJ-7 --max-cost 5 --json
+director agent list --state running    # every command supports --json
+director agent show  <job-id> --json   # progress, DAG counts, cost, next action
+director agent wait  <job-id> --timeout 3600   # exit 0 only if the job succeeded
+director agent logs  <job-id> --tail 50 [--follow]
+director agent events <job-id> --after <cursor>   # JSON Lines, monotonic cursor
+director agent cancel <job-id>         # kills the whole job process tree
+director agent retry  <job-id>         # resume a failed/interrupted job
+director agent prune                   # delete storage of terminal jobs (branches stay)
+director agent status --json           # daemon, service, capacity, health warnings
+```
+
+- **Job-scoped storage.** Everything an agent job generates lives under
+  `~/.director/agent/jobs/<job-id>/` (override the root with `DIRECTOR_AGENT_HOME`)
+  — never inside the target repository. Repo-local `.director/config.toml` is still
+  read as configuration.
+- **Concurrent jobs per repo.** Submission captures the base commit; each job runs
+  in its own top-level git worktree on a unique `director/job-…` branch. The
+  submitted checkout (branch, index, uncommitted files) is never touched, and
+  successful job branches are visible from the source repo.
+- **Durable + recoverable.** Runners heartbeat and write results atomically. On
+  restart the agent re-adopts live runners, reflects finished results, and resumes
+  interrupted jobs from their persisted state. `--request-id` makes submission
+  retries idempotent.
+- **One read-only dashboard.** `http://127.0.0.1:8642/` lists every job;
+  `/job/<id>/` is the familiar per-run DAG view. Mutations require the bearer
+  token in `~/.director/agent/token`, so the browser stays read-only.
+- **Stable exit codes** for scripting: `0` ok, `1` `wait` on a job that didn't
+  succeed, `2` usage, `3` daemon unavailable, `4` job not found, `5` conflict,
+  `6` `wait --timeout` elapsed.
+- **Service environment.** Services don't inherit your shell env; put `KEY=VALUE`
+  lines (PATH, provider keys) in `~/.director/agent/agent.env` — parsed strictly,
+  never shell-evaluated. Manual platform checks live in
+  [`docs/agent-smoke-tests.md`](docs/agent-smoke-tests.md).
 
 ## Configuration
 

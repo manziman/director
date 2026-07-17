@@ -14,7 +14,6 @@ allowlists are disjoint, so their merges never conflict. Git mutations
 from __future__ import annotations
 
 import shutil
-import tempfile
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -26,6 +25,7 @@ from director.config import Config
 from director.cost import CostLedger, cost_of
 from director.gates import GateResult, gate_failure_detail, integration_gate, node_gate
 from director.guidance import RepositoryGuidance
+from director.jobctx import JobContext
 from director.metrics import MetricsWriter
 from director.models import DONE, ESCALATED, FAILED, RUNNING, Node, Plan
 from director.opencode import run_agent, watch_it_fail
@@ -210,26 +210,29 @@ def _process_node(
     )
 
 
-def run_job(repo: str, cfg: Config, parallel: int, max_attempts: int, log) -> dict:
-    repo = Path(repo).resolve()
-    guidance = RepositoryGuidance.discover(repo)
-    fdir = repo / ".director"
-    setup.ensure_director_gitignore(repo)  # never let `git add -A` commit generated .director files
+def run_job(
+    repo: str, cfg: Config, parallel: int, max_attempts: int, log, ctx: JobContext | None = None
+) -> dict:
+    ctx = ctx or JobContext.for_repo(repo)
+    ws = ctx.workspace
+    guidance = RepositoryGuidance.discover(ws)
+    fdir = ctx.artifact_dir
+    setup.ensure_director_gitignore(ws)  # never let `git add -A` commit generated .director files
     plan = Plan.from_json((fdir / "plan.json").read_text())
-    state = RunState.load_or_init(repo, plan)
+    state = RunState.load_or_init_at(fdir, plan)
     ledger = CostLedger(fdir / "costs.jsonl")
     metrics = MetricsWriter(fdir / "metrics.jsonl")
-    logs = fdir / "logs"
+    logs = ctx.logs_dir
     run_t0 = time.perf_counter()
     # Worktrees live OUTSIDE the repo tree: a worktree nested inside the repo lets
     # OpenCode resolve the enclosing repo as the project root and leak edits out of
     # the isolated checkout. A sibling temp dir keeps each worktree its own root.
-    wt_root = Path(tempfile.gettempdir()) / "director-worktrees" / plan.job_id
+    wt_root = ctx.worktree_root(plan.job_id)
     wt_root.mkdir(parents=True, exist_ok=True)
     git_lock = threading.Lock()
 
-    if gitutil.current_branch(repo) != plan.job_branch:
-        gitutil.checkout(plan.job_branch, repo)
+    if gitutil.current_branch(ws) != plan.job_branch:
+        gitutil.checkout(plan.job_branch, ws)
 
     dag.validate(plan)
     done = state.done_ids()
@@ -248,15 +251,15 @@ def run_job(repo: str, cfg: Config, parallel: int, max_attempts: int, log) -> di
         node = plan.node(node_id)
         with git_lock:
             wt = wt_root / node_id
-            gitutil.worktree_remove(wt, repo)  # no-op if not registered
+            gitutil.worktree_remove(wt, ws)  # no-op if not registered
             shutil.rmtree(wt, ignore_errors=True)
             # drop any stale registration left by a killed run (dir gone but git
             # still tracks it) so `worktree add` below can't fail with exit 255.
-            gitutil.git(["worktree", "prune"], repo, check=False)
+            gitutil.git(["worktree", "prune"], ws, check=False)
             task_branch = f"director/task-{plan.job_id}-{node_id}"
-            if gitutil.branch_exists(task_branch, repo):
-                gitutil.git(["branch", "-D", task_branch], repo, check=False)
-            gitutil.worktree_add(wt, task_branch, plan.job_branch, repo)
+            if gitutil.branch_exists(task_branch, ws):
+                gitutil.git(["branch", "-D", task_branch], ws, check=False)
+            gitutil.worktree_add(wt, task_branch, plan.job_branch, ws)
             state[node_id].status = RUNNING
             state[node_id].worktree = str(wt)
             state.save()
@@ -299,7 +302,7 @@ def run_job(repo: str, cfg: Config, parallel: int, max_attempts: int, log) -> di
                 active.discard(nid)
                 outcome = fut.result()
                 try:
-                    _finalize(outcome, plan, state, repo, git_lock, ledger, cfg, log, metrics)
+                    _finalize(outcome, plan, state, ws, git_lock, ledger, cfg, log, metrics)
                 except CostCeilingExceeded as e:
                     log(f"[run] ABORT: {e}")
                     aborted = True
@@ -307,7 +310,7 @@ def run_job(repo: str, cfg: Config, parallel: int, max_attempts: int, log) -> di
                 if outcome.ok and state[nid].status == DONE:
                     done.add(nid)
 
-    integ = integration_gate(repo, cfg)
+    integ = integration_gate(ws, cfg)
     log(
         f"[run] integration gate: "
         f"{'PASS' if integ.ok else 'FAIL (' + ', '.join(integ.failures) + ')'}"
