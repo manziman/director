@@ -65,6 +65,15 @@ executor run the failing tests *before* its first edit? This is advisory (the
 deterministic gate already enforces the contract) and recorded as a metric —
 `observed` / `not_observed` / `unknown`.
 
+### Repository coding guidance
+
+Before planning or running, director discovers repository-local `AGENTS.md` and
+`CLAUDE.md` files. Recon and planning receive the complete, path-labelled set so
+they can plan for documented requirements. Test authors, executors, and reviewers
+receive the root guidance plus only the nested guidance that applies to their
+node's implementation and test paths. Nested guidance applies only below the
+directory where it lives.
+
 **status** — per-node state, attempts, cost, executor-tier completion rate (the
 falsifiable hypothesis target: >70% of nodes done without escalation), stage-two
 review trigger rate, and watch-it-fail observed count.

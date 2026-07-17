@@ -14,7 +14,10 @@ atomic units of work that a *cheaper* model will implement independently, each i
 a fresh context with no memory of your reasoning or of sibling units.
 
 You are given the approved spec (the contract — do not re-litigate it) and a
-relevant-files summary produced by a recon pass. Decompose what the spec says.
+relevant-files summary produced by a recon pass, plus repository coding guidance.
+Treat the guidance as authoritative: include the work and tests it requires, reuse
+documented helpers, and record an explicit reason when a stated requirement does
+not apply. Decompose what the spec says.
 
 **Plan-writing standard — write every `spec` for an enthusiastic junior engineer**
 who has no project context, exercises no judgment, and would rather not test.

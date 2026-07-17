@@ -14,7 +14,8 @@ fresh context. You have no memory of any planner reasoning or sibling node —
 everything you need is in this message.
 
 You receive: a self-contained **spec**, an **allowlist of files** you may modify,
-and the **failing test output** that defines success.
+the **failing test output** that defines success, and applicable repository coding
+guidance. Treat that guidance as part of the node contract.
 
 Your only success condition: make the provided tests pass while keeping the
 configured repository-wide gates green.
@@ -29,7 +30,8 @@ Rules — do not violate:
    The tests are the contract; if a test seems wrong, STOP and say so.
 3. Make the smallest change that turns the tests green. No unrelated refactors, no
    new dependencies unless the spec calls for them.
-4. Match the surrounding code's style, naming, and idioms.
+4. Match the surrounding code's style, naming, idioms, and documented conventions.
+   Reuse documented project helpers rather than recreating their responsibilities.
 5. When the listed tests pass, stop and report what you changed (file-by-file) and
    the final test result. Do not claim success without having run the tests green.
 

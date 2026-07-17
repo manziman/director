@@ -22,6 +22,7 @@ from pathlib import Path
 from director import gitutil
 from director.config import Config
 from director.gates import build_ignore_matcher
+from director.guidance import RepositoryGuidance
 from director.models import Node
 from director.opencode import run_agent
 
@@ -49,7 +50,7 @@ def _diff(worktree: Path, timeout: int) -> str:
     return p.stdout
 
 
-def _reviewer_message(node: Node, diff: str, stage: str) -> str:
+def _reviewer_message(node: Node, diff: str, stage: str, guidance_context: str = "") -> str:
     return "\n".join(
         [
             f"Perform {stage} review of node '{node.id}' — {node.title}.",
@@ -61,6 +62,8 @@ def _reviewer_message(node: Node, diff: str, stage: str) -> str:
             "",
             "UNIFIED DIFF (already passed tests + allowlist gate):",
             diff[:20000] if diff else "(empty diff)",
+            "",
+            guidance_context,
             "",
             "Emit your strict-JSON verdict per your instructions.",
         ]
@@ -80,7 +83,14 @@ def _should_run_stage_two(node: Node, worktree: Path, cfg: Config, escalated: bo
 
 
 def review_node(
-    node: Node, worktree: Path, cfg: Config, logs: Path, log, *, escalated: bool
+    node: Node,
+    worktree: Path,
+    cfg: Config,
+    logs: Path,
+    log,
+    *,
+    escalated: bool,
+    guidance: RepositoryGuidance | None = None,
 ) -> ReviewResult:
     from director.plan import _extract_json  # reuse the tolerant JSON extractor
 
@@ -92,7 +102,12 @@ def review_node(
         s1 = run_agent(
             agent="reviewer",
             model=cfg.model_for("explorer"),
-            message=_reviewer_message(node, diff, "stage-one spec-compliance"),
+            message=_reviewer_message(
+                node,
+                diff,
+                "stage-one spec-compliance",
+                guidance.for_files([*node.files, *node.tests]) if guidance else "",
+            ),
             cwd=worktree,
             log_path=logs / f"{node.id}-review-stage1.jsonl",
             timeout=cfg.node_timeout,
@@ -113,7 +128,12 @@ def review_node(
     rv = run_agent(
         agent="reviewer",
         model=model,
-        message=_reviewer_message(node, diff, "stage-two code-quality"),
+        message=_reviewer_message(
+            node,
+            diff,
+            "stage-two code-quality",
+            guidance.for_files([*node.files, *node.tests]) if guidance else "",
+        ),
         cwd=worktree,
         log_path=logs / f"{node.id}-review-stage2.jsonl",
         timeout=cfg.node_timeout,
