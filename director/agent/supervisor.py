@@ -18,6 +18,7 @@ the whole job tree (provider subprocesses included) with one killpg.
 
 from __future__ import annotations
 
+import calendar
 import contextlib
 import os
 import shlex
@@ -81,6 +82,16 @@ def default_runner_cmd() -> list[str]:
     return [sys.executable, "-m", "director", "agent", "run-job"]
 
 
+def _secs_since(ts: str | None) -> float:
+    """Seconds since an RFC 3339 UTC timestamp; unparseable → +inf (treat as old)."""
+    if not ts:
+        return float("inf")
+    try:
+        return max(0.0, time.time() - calendar.timegm(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")))
+    except ValueError:
+        return float("inf")
+
+
 class Supervisor:
     def __init__(self, store: JobStore, max_jobs: int = 2, log=None):
         self.store = store
@@ -138,6 +149,18 @@ class Supervisor:
             )
         base_commit = rev.stdout.strip()
 
+        # Resolve and validate the configuration NOW: an accepted job must be
+        # immune to later edits of the checkout's .director/config.toml (the
+        # runner rebuilds its Config from this snapshot, never from live files),
+        # and a broken config should fail the submission, not the runner.
+        from director import config as config_mod
+
+        try:
+            cfg_snapshot = config_mod.snapshot(repo)
+            config_mod.from_snapshot(cfg_snapshot, repo / ".director" / "config.toml")
+        except (FileNotFoundError, ValueError) as e:
+            raise SubmitError("config_invalid", str(e)) from e
+
         settings = {
             "parallel": int(req.get("parallel") or 1),
             "max_attempts": int(req.get("max_attempts") or 0),
@@ -174,6 +197,7 @@ class Supervisor:
             request["job_id"] = job_id
             request["job_branch"] = storage.job_branch_for(job_id)
             job = self.store.create_job(request)
+            storage.atomic_write_json(self.store.config_path(job_id), cfg_snapshot)
         self.log(f"[agent] accepted {job_id} for {repo} @ {base_commit[:12]}")
         return job, True
 
@@ -193,13 +217,38 @@ class Supervisor:
         queued = [
             j
             for j in (self.store.load_job(jid) for jid in self.store.job_ids())
+            # a job we already track (spawned child or re-adopted runner) must
+            # never get a second runner, whatever its registry state says
             if j["state"] == QUEUED
+            and j["job_id"] not in self._children
+            and j["job_id"] not in self._adopted
         ]
         queued.sort(key=lambda j: (j.get("submitted_at") or "", j["job_id"]))
         for job in queued:
             if self._running_count() >= self.max_jobs:
                 break
+            if not self._claim_queued(job):
+                continue
             self._spawn(job)
+
+    def _claim_queued(self, job: dict) -> bool:
+        """True if `job` is safe to spawn a runner for. A queued job can carry a
+        recorded PID when a previous supervisor died between _spawn() and the
+        runner reaching `preparing` — starting a second runner then would race
+        the live one. Adopt a live runner; give a freshly recorded PID one
+        heartbeat window to prove itself; only then treat it as dead."""
+        pid = job.get("pid")
+        if not pid:
+            return True
+        job_id = job["job_id"]
+        if self.store.runner_alive(job):
+            self._adopted.add(job_id)
+            self.log(f"[agent] re-adopted just-spawned runner for {job_id}")
+            return False
+        if storage.pid_exists(int(pid)) and _secs_since(job.get("updated_at")) < storage.STALE_SECS:
+            return False  # may still be booting (no fresh heartbeat yet) — recheck next tick
+        self.store.update_job(job_id, pid=None)  # dead (or recycled PID) — spawn cleanly
+        return True
 
     def _spawn(self, job: dict) -> None:
         from director.proc import popen_tree
@@ -278,8 +327,15 @@ class Supervisor:
                 exit_code=result.get("exit_code", exit_code),
             )
             return
-        resumes = int(job.get("resume_count") or 0)
         self.store.set_state(job_id, INTERRUPTED, reason="runner_died", exit_code=exit_code)
+        self._resume_or_fail(job_id, exit_code)
+
+    def _resume_or_fail(self, job_id: str, exit_code: int | None = None) -> None:
+        """An interrupted job resumes from its persisted artifacts — but only
+        MAX_RESUMES times, so a crash-looping runner ends as a stable failure
+        with a durable result instead of respawning forever."""
+        job = self.store.load_job(job_id)
+        resumes = int(job.get("resume_count") or 0)
         if resumes < MAX_RESUMES:
             self.store.update_job(job_id, resume_count=resumes + 1, pid=None)
             self.store.set_state(job_id, QUEUED, reason="resume")
@@ -320,8 +376,9 @@ class Supervisor:
                         self._finalize_dead(job_id, exit_code=None)
                 elif state == INTERRUPTED:
                     # Interrupted while the agent was down: resume it (bounded).
-                    self._finalize_resume_interrupted(job)
-                # QUEUED jobs are picked up by the next tick.
+                    self._resume_or_fail(job_id)
+                # QUEUED jobs are picked up by the next tick; _fill_capacity
+                # handles the queued-with-recorded-PID window there.
 
     def _registry_ids_repairing_corrupt(self) -> list[str]:
         """Job dirs with an unreadable job.json but a readable request.json are
@@ -370,28 +427,6 @@ class Supervisor:
                 )
                 ids.append(p.name)
         return ids
-
-    def _finalize_resume_interrupted(self, job: dict) -> None:
-        resumes = int(job.get("resume_count") or 0)
-        if resumes < MAX_RESUMES:
-            self.store.update_job(job["job_id"], resume_count=resumes + 1, pid=None)
-            self.store.set_state(job["job_id"], QUEUED, reason="resume")
-        else:
-            error = {
-                "code": "too_many_interruptions",
-                "message": f"runner died {resumes + 1} times without a result",
-            }
-            self.store.write_result(
-                job["job_id"],
-                {
-                    "ok": False,
-                    "error": error,
-                    "run": None,
-                    "exit_code": None,
-                    "finished_at": storage.utc_now(),
-                },
-            )
-            self.store.set_state(job["job_id"], FAILED, reason=error["code"], error=error)
 
     # ---- mutations ----------------------------------------------------------
     def cancel(self, job_id: str) -> dict:
@@ -509,21 +544,6 @@ class Supervisor:
             }
 
 
-def read_agent_info(root: Path) -> dict | None:
-    return storage.read_json(Path(root) / "agent.json")
-
-
-def write_agent_info(root: Path, info: dict) -> None:
-    storage.atomic_write_json(Path(root) / "agent.json", info)
-
-
-def prune_request_valid(payload) -> list[str] | None:
-    ids = payload.get("job_ids") if isinstance(payload, dict) else None
-    if ids is None:
-        return None
-    return [str(i) for i in ids]
-
-
 def registry_summary(store: JobStore) -> dict:
     """Storage-only agent summary for `agent status` when the daemon is down."""
     by_state: dict[str, int] = {}
@@ -536,9 +556,3 @@ def registry_summary(store: JobStore) -> dict:
         "active": sum(by_state.get(s, 0) for s in ACTIVE_STATES),
         "queued": by_state.get(QUEUED, 0),
     }
-
-
-def load_env(root: Path) -> dict[str, str]:
-    from director.agent.envfile import load_env_file
-
-    return load_env_file(Path(root) / "agent.env")

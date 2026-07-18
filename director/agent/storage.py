@@ -127,10 +127,21 @@ def pid_exists(pid: int) -> bool:
     return True
 
 
+def enforce_user_only(path: Path) -> None:
+    """Clamp a secrets file to user-only permissions (POSIX; no-op elsewhere)."""
+    if os.name == "nt":
+        return
+    with contextlib.suppress(OSError):
+        if path.stat().st_mode & 0o077:
+            os.chmod(path, 0o600)
+
+
 def ensure_token(root: Path) -> str:
-    """The bearer token gating mutating API calls; user-only permissions."""
+    """The bearer token gating mutating API calls; user-only permissions are
+    enforced on every read, not just at creation."""
     path = Path(root) / "token"
     if path.exists():
+        enforce_user_only(path)
         return path.read_text().strip()
     path.parent.mkdir(parents=True, exist_ok=True)
     token = secrets.token_urlsafe(32)
@@ -179,6 +190,11 @@ class JobStore:
 
     def request_path(self, job_id: str) -> Path:
         return self.job_dir(job_id) / "request.json"
+
+    def config_path(self, job_id: str) -> Path:
+        """The resolved-config snapshot captured at submission (see
+        director.config.snapshot) — the runner's only config source."""
+        return self.job_dir(job_id) / "config.json"
 
     def job_path(self, job_id: str) -> Path:
         return self.job_dir(job_id) / "job.json"

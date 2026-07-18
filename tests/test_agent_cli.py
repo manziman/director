@@ -127,6 +127,16 @@ class CliTestCase(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(out, "b\nc\n")
 
+    def test_logs_json_is_one_parseable_document(self):
+        jid = self._make_job()
+        (self.store.job_dir(jid) / "runner.log").write_text("a\nb\nc\n")
+        rc, out, _ = self._run("logs", jid, "--tail", "2", "--json")
+        self.assertEqual(rc, 0)
+        doc = json.loads(out)
+        self.assertEqual(doc["job_id"], jid)
+        self.assertEqual(doc["log"], "b\nc\n")
+        self.assertEqual(doc["tail"], 2)
+
     def test_status_reports_not_running_and_exits_0(self):
         rc, out, _ = self._run("status", "--json")
         self.assertEqual(rc, 0)

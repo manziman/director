@@ -35,6 +35,21 @@ class ServerTestCase(unittest.TestCase):
         gitutil.git(["config", "user.email", "t@t"], cls.repo)
         gitutil.git(["config", "user.name", "t"], cls.repo)
         (cls.repo / "README.md").write_text("hello\n")
+        (cls.repo / ".director").mkdir()
+        (cls.repo / ".director" / "config.toml").write_text(
+            "[tiers]\n"
+            + "".join(
+                f'{role} = "claude-code/sonnet"\n'
+                for role in (
+                    "planner",
+                    "test_author",
+                    "executor",
+                    "explorer",
+                    "reviewer",
+                    "escalation",
+                )
+            )
+        )
         gitutil.commit_all("init", cls.repo)
         cls.store = JobStore(cls.home)
         cls.sup = Supervisor(cls.store, max_jobs=1, log=lambda m: None)  # never .start()ed
@@ -212,6 +227,36 @@ class ServerTestCase(unittest.TestCase):
             pruned = json.loads(r.read())["pruned"]
         self.assertEqual(pruned, [jid])
         self.assertFalse(self.store.job_dir(jid).exists())
+
+
+class ProviderPreflightTests(unittest.TestCase):
+    """Preflight flags providers configured in the user-level tiers whose
+    executables are missing from PATH."""
+
+    def _warnings(self, which_result):
+        from unittest import mock
+
+        from director.agent import server as srv
+
+        home = Path(tempfile.mkdtemp())
+        (home / ".director").mkdir()
+        (home / ".director" / "config.toml").write_text(
+            '[tiers]\nplanner = "codex/gpt-5"\nexecutor = "opencode/x/y"\n'
+        )
+        with (
+            mock.patch("pathlib.Path.home", return_value=home),
+            mock.patch.object(srv.shutil, "which", lambda b: which_result),
+        ):
+            return srv._provider_warnings()
+
+    def test_missing_provider_executables_are_flagged(self):
+        warnings = self._warnings(None)
+        self.assertEqual(len(warnings), 2)
+        self.assertTrue(any("codex" in w for w in warnings))
+        self.assertTrue(any("opencode" in w for w in warnings))
+
+    def test_present_executables_produce_no_warnings(self):
+        self.assertEqual(self._warnings("/usr/bin/tool"), [])
 
 
 if __name__ == "__main__":

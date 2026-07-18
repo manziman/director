@@ -35,6 +35,34 @@ MAX_BODY = 1_000_000
 MAX_LOG_BYTES = 512_000
 
 
+# The CLI each provider adapter actually invokes (see the provider modules) —
+# preflight can then say "codex is configured but not installed" up front
+# instead of failing the first job that needs it.
+_PROVIDER_BINARIES = {"claude-code": "claude", "codex": "codex", "opencode": "opencode", "pi": "pi"}
+
+
+def _provider_warnings() -> list[str]:
+    """Missing executables for providers named in the user-level config tiers."""
+    import tomllib
+
+    path = Path.home() / ".director" / "config.toml"
+    if not path.exists():
+        return []
+    try:
+        with path.open("rb") as f:
+            tiers = tomllib.load(f).get("tiers", {})
+    except (OSError, tomllib.TOMLDecodeError) as e:
+        return [f"user config {path} is unreadable: {e}"]
+    warnings = []
+    for provider in sorted({str(t).split("/", 1)[0] for t in tiers.values()}):
+        binary = _PROVIDER_BINARIES.get(provider, provider)
+        if shutil.which(binary) is None:
+            warnings.append(
+                f"provider {provider!r} is configured but its executable {binary!r} is not on PATH"
+            )
+    return warnings
+
+
 def preflight(root: Path) -> list[str]:
     """Environment diagnostics surfaced in `agent status` and at serve startup."""
     warnings: list[str] = []
@@ -55,6 +83,7 @@ def preflight(root: Path) -> list[str]:
         load_env_file(root / "agent.env")
     except ValueError as e:
         warnings.append(f"agent.env is malformed: {e}")
+    warnings.extend(_provider_warnings())
     return warnings
 
 
@@ -297,9 +326,14 @@ def serve(
     store.root.mkdir(parents=True, exist_ok=True)
 
     # Services don't inherit an interactive shell environment; agent.env is the
-    # explicit, strictly-parsed substitute (never shell-evaluated).
-    env = load_env_strict(store.root)
-    os.environ.update(env)
+    # explicit, strictly-parsed substitute (never shell-evaluated). It can hold
+    # provider keys, so like the token it must stay user-only.
+    from director.agent.envfile import load_env_file
+
+    env_path = store.root / "agent.env"
+    if env_path.exists():
+        storage.enforce_user_only(env_path)
+    os.environ.update(load_env_file(env_path))
     token = storage.ensure_token(store.root)
     for w in preflight(store.root):
         log(f"director agent: WARNING — {w}")
@@ -345,9 +379,3 @@ def serve(
         server.server_close()
         info["stopped_at"] = storage.utc_now()
         storage.atomic_write_json(store.root / "agent.json", info)
-
-
-def load_env_strict(root: Path) -> dict[str, str]:
-    from director.agent.envfile import load_env_file
-
-    return load_env_file(Path(root) / "agent.env")

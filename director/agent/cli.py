@@ -257,21 +257,38 @@ def cmd_logs(args) -> int:
         if args.tail is not None:
             lines = text.splitlines()[-args.tail :]
             text = "\n".join(lines) + ("\n" if lines else "")
-        sys.stdout.write(text)
+        if args.json:
+            _emit(
+                {
+                    "schema_version": storage.SCHEMA_VERSION,
+                    "job_id": args.job_id,
+                    "tail": args.tail,
+                    "log": text,
+                }
+            )
+        else:
+            sys.stdout.write(text)
         return EXIT_OK
+
+    def write_chunk(chunk: str) -> None:
+        if args.json:  # follow streams JSON Lines, one document per log line
+            for line in chunk.splitlines():
+                print(json.dumps({"line": line}))
+        else:
+            sys.stdout.write(chunk)
+        sys.stdout.flush()
 
     offset = 0
     if args.tail is not None and path.exists():
         head = path.read_text(errors="replace")
         lines = head.splitlines()[-args.tail :]
-        sys.stdout.write("\n".join(lines) + ("\n" if lines else ""))
+        write_chunk("\n".join(lines) + ("\n" if lines else ""))
         offset = len(head.encode())
     try:
         while True:
             chunk, offset = read_from(offset)
             if chunk:
-                sys.stdout.write(chunk)
-                sys.stdout.flush()
+                write_chunk(chunk)
             state = store.load_job(args.job_id)["state"]
             if state in TERMINAL_STATES and not chunk:
                 return EXIT_OK
@@ -466,11 +483,11 @@ def add_agent_parser(sub) -> None:
     )
     pwa.set_defaults(func=cmd_wait)
 
-    plg = asub.add_parser("logs", help="job runner log")
+    plg = jsonable(asub.add_parser("logs", help="job runner log"))
     plg.add_argument("job_id")
     plg.add_argument("--tail", type=int, default=None, metavar="N")
-    plg.add_argument("--follow", action="store_true")
-    plg.set_defaults(func=cmd_logs, json=False)
+    plg.add_argument("--follow", action="store_true", help="stream until the job is terminal")
+    plg.set_defaults(func=cmd_logs)
 
     pe = asub.add_parser("events", help="lifecycle events as JSON Lines")
     pe.add_argument("job_id")

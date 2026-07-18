@@ -48,6 +48,15 @@ def _default_run(argv: list[str]) -> subprocess.CompletedProcess:
         ) from e
 
 
+def _check(res, what: str) -> None:
+    """A failed service-manager command is an error, never silent success."""
+    if res.returncode != 0:
+        detail = ((getattr(res, "stderr", "") or getattr(res, "stdout", "")) or "").strip()
+        raise ServiceError(
+            f"{what} failed (exit {res.returncode})" + (f": {detail}" if detail else "")
+        )
+
+
 def executable_argv() -> list[str]:
     """Absolute invocation for service files (PATH is not reliable in services)."""
     exe = shutil.which("director")
@@ -63,8 +72,21 @@ def serve_argv(port: int) -> list[str]:
 # --------------------------------------------------------------------------- #
 # rendering (pure)
 # --------------------------------------------------------------------------- #
+_SYSTEMD_SAFE = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@%+=:,./-"
+)
+
+
+def _systemd_quote(arg: str) -> str:
+    """Quote one ExecStart argument for systemd's command-line syntax (paths
+    with spaces or quotes must survive unit-file parsing)."""
+    if arg and set(arg) <= _SYSTEMD_SAFE:
+        return arg
+    return '"' + arg.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def render_systemd_unit(port: int) -> str:
-    exec_start = " ".join(serve_argv(port))
+    exec_start = " ".join(_systemd_quote(a) for a in serve_argv(port))
     return (
         "[Unit]\n"
         "Description=Director agent — local job supervisor and dashboard\n"
@@ -81,7 +103,10 @@ def render_systemd_unit(port: int) -> str:
 
 
 def render_launchd_plist(port: int, log_path: Path) -> str:
-    args = "".join(f"      <string>{a}</string>\n" for a in serve_argv(port))
+    from xml.sax.saxutils import escape
+
+    args = "".join(f"      <string>{escape(a)}</string>\n" for a in serve_argv(port))
+    log_path = escape(str(log_path))
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
@@ -155,11 +180,13 @@ def install(
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
             actions.append(f"wrote {path}")
-        run(["systemctl", "--user", "daemon-reload"])
-        run(["systemctl", "--user", "enable", SERVICE_NAME])
+        _check(run(["systemctl", "--user", "daemon-reload"]), "systemctl --user daemon-reload")
+        _check(run(["systemctl", "--user", "enable", SERVICE_NAME]), "systemctl --user enable")
         actions.append("enabled director-agent.service")
         if start:
-            run(["systemctl", "--user", "restart", SERVICE_NAME])
+            _check(
+                run(["systemctl", "--user", "restart", SERVICE_NAME]), "systemctl --user restart"
+            )
             actions.append("started director-agent.service")
         return {"platform": plat, "path": str(path), "actions": actions, "note": LINGER_NOTE}
 
@@ -175,11 +202,16 @@ def install(
         path.write_text(content)
         actions.append(f"wrote {path}")
     domain = _gui_domain(uid)
-    run(["launchctl", "bootout", domain, str(path)])  # idempotent re-load
-    run(["launchctl", "bootstrap", domain, str(path)])
+    # bootout fails when the agent isn't loaded yet — that's the idempotent
+    # re-load path, not an error. bootstrap/kickstart failures ARE errors.
+    run(["launchctl", "bootout", domain, str(path)])
+    _check(run(["launchctl", "bootstrap", domain, str(path)]), "launchctl bootstrap")
     actions.append(f"bootstrapped {LAUNCHD_LABEL}")
     if start:
-        run(["launchctl", "kickstart", "-k", f"{domain}/{LAUNCHD_LABEL}"])
+        _check(
+            run(["launchctl", "kickstart", "-k", f"{domain}/{LAUNCHD_LABEL}"]),
+            "launchctl kickstart",
+        )
         actions.append(f"started {LAUNCHD_LABEL}")
     return {"platform": plat, "path": str(path), "actions": actions, "note": None}
 
@@ -195,17 +227,18 @@ def uninstall(
     actions: list[str] = []
     if plat == "linux":
         path = systemd_unit_path(home)
+        # disable/stop of a never-installed unit fails — tolerated for idempotency
         run(["systemctl", "--user", "disable", "--now", SERVICE_NAME])
         if path.exists():
             path.unlink()
             actions.append(f"removed {path}")
         else:
             actions.append("unit was not installed")
-        run(["systemctl", "--user", "daemon-reload"])
+        _check(run(["systemctl", "--user", "daemon-reload"]), "systemctl --user daemon-reload")
         return {"platform": plat, "path": str(path), "actions": actions, "note": None}
 
     path = launchd_plist_path(home)
-    run(["launchctl", "bootout", _gui_domain(uid), str(path)])
+    run(["launchctl", "bootout", _gui_domain(uid), str(path)])  # tolerated: may not be loaded
     if path.exists():
         path.unlink()
         actions.append(f"removed {path}")

@@ -97,6 +97,13 @@ class StoreBasicsTests(unittest.TestCase):
             mode = (self.tmp / "token").stat().st_mode & 0o777
             self.assertEqual(mode, 0o600)
 
+    @unittest.skipIf(os.name == "nt", "POSIX mode bits")
+    def test_loosened_token_permissions_are_tightened_on_read(self):
+        storage.ensure_token(self.tmp)
+        os.chmod(self.tmp / "token", 0o644)
+        storage.ensure_token(self.tmp)
+        self.assertEqual((self.tmp / "token").stat().st_mode & 0o777, 0o600)
+
 
 class EventTests(unittest.TestCase):
     def setUp(self):

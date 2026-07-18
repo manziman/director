@@ -16,16 +16,22 @@ from director.agent import service  # noqa: E402
 
 
 class FakeRun:
-    def __init__(self, returncode=0, stdout=""):
+    def __init__(self, returncode=0, stdout="", fail=()):
+        """`fail` is a tuple of argv prefixes that return exit 1 (everything
+        else succeeds) — lets a test fail exactly one lifecycle step."""
         self.calls: list[list[str]] = []
         self.returncode = returncode
         self.stdout = stdout
+        self.fail = tuple(tuple(p) for p in fail)
 
     def __call__(self, argv):
         self.calls.append(argv)
         import types
 
-        return types.SimpleNamespace(returncode=self.returncode, stdout=self.stdout, stderr="")
+        rc = self.returncode
+        if any(tuple(argv[: len(p)]) == p for p in self.fail):
+            rc = 1
+        return types.SimpleNamespace(returncode=rc, stdout=self.stdout, stderr="boom" if rc else "")
 
 
 class RenderTests(unittest.TestCase):
@@ -54,6 +60,84 @@ class RenderTests(unittest.TestCase):
         first_arg = plist.split("<array>\n")[1].splitlines()[0].strip()
         executable = first_arg.removeprefix("<string>").removesuffix("</string>")
         self.assertTrue(Path(executable).is_absolute(), first_arg)
+
+
+class EscapingTests(unittest.TestCase):
+    """Paths with spaces/XML metacharacters must survive service rendering."""
+
+    WEIRD = "/weird path/dir&co/<director>"
+
+    def test_systemd_execstart_quotes_unsafe_arguments(self):
+        from unittest import mock
+
+        with mock.patch.object(service, "executable_argv", return_value=[self.WEIRD]):
+            unit = service.render_systemd_unit(8642)
+        exec_line = next(line for line in unit.splitlines() if line.startswith("ExecStart="))
+        self.assertIn(f'"{self.WEIRD}"', exec_line)
+        # plain arguments stay unquoted
+        self.assertIn(" agent serve ", exec_line)
+
+    def test_systemd_quote_escapes_backslashes_and_quotes(self):
+        self.assertEqual(service._systemd_quote('a "b" c\\d'), '"a \\"b\\" c\\\\d"')
+        self.assertEqual(service._systemd_quote("/usr/bin/director"), "/usr/bin/director")
+
+    def test_launchd_plist_escapes_xml_metacharacters(self):
+        from unittest import mock
+
+        with mock.patch.object(service, "executable_argv", return_value=[self.WEIRD]):
+            plist = service.render_launchd_plist(8642, Path("/logs/a&b/agent.log"))
+        self.assertIn("<string>/weird path/dir&amp;co/&lt;director&gt;</string>", plist)
+        self.assertIn("<string>/logs/a&amp;b/agent.log</string>", plist)
+        self.assertNotIn(self.WEIRD, plist)  # nothing unescaped slips through
+
+
+class ServiceFailureTests(unittest.TestCase):
+    """Service-manager failures surface as ServiceError, never silent success."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+
+    def test_systemd_enable_failure_raises(self):
+        run = FakeRun(fail=[("systemctl", "--user", "enable")])
+        with self.assertRaises(service.ServiceError) as ctx:
+            service.install(8642, platform="linux", home=self.home, run=run)
+        self.assertIn("enable", str(ctx.exception))
+        self.assertIn("boom", str(ctx.exception))
+
+    def test_systemd_restart_failure_raises(self):
+        run = FakeRun(fail=[("systemctl", "--user", "restart")])
+        with self.assertRaises(service.ServiceError):
+            service.install(8642, platform="linux", home=self.home, run=run)
+
+    def test_launchd_bootstrap_failure_raises(self):
+        run = FakeRun(fail=[("launchctl", "bootstrap")])
+        with self.assertRaises(service.ServiceError):
+            service.install(
+                8642, platform="darwin", home=self.home, agent_home=self.home, uid=501, run=run
+            )
+
+    def test_launchd_bootout_failure_is_tolerated(self):
+        # bootout fails whenever the agent isn't already loaded — the normal
+        # first-install path, not an error
+        run = FakeRun(fail=[("launchctl", "bootout")])
+        report = service.install(
+            8642, platform="darwin", home=self.home, agent_home=self.home, uid=501, run=run
+        )
+        self.assertTrue(any("bootstrapped" in a for a in report["actions"]))
+
+    def test_uninstall_tolerates_disable_failure_but_checks_reload(self):
+        report = service.uninstall(
+            platform="linux",
+            home=self.home,
+            run=FakeRun(fail=[("systemctl", "--user", "disable")]),
+        )
+        self.assertTrue(any("not installed" in a for a in report["actions"]))
+        with self.assertRaises(service.ServiceError):
+            service.uninstall(
+                platform="linux",
+                home=self.home,
+                run=FakeRun(fail=[("systemctl", "--user", "daemon-reload")]),
+            )
 
 
 class SystemdLifecycleTests(unittest.TestCase):

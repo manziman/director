@@ -63,16 +63,29 @@ class RunnerTestCase(unittest.TestCase):
             }
         )
         self.jid = jid
+        # the resolved-config snapshot the supervisor persists at submission —
+        # the runner's ONLY config source
+        storage.atomic_write_json(
+            self.store.config_path(jid),
+            {
+                "tiers": dict.fromkeys(
+                    ("planner", "test_author", "executor", "explorer", "reviewer", "escalation"),
+                    "claude-code/sonnet",
+                )
+            },
+        )
 
     def _patched(self, plan_fn=None, run_fn=None):
         plan_fn = plan_fn or mock.Mock(return_value=_plan_result(self.jid))
         run_fn = run_fn or mock.Mock(return_value=dict(OK_RUN))
-        cfg = mock.Mock()
-        cfg.max_attempts = 3
+        # The runner must build its Config from the persisted snapshot; loading
+        # live config from the submitted checkout is the exact defect this
+        # guards against (post-submission edits changing an accepted job).
+        forbidden = mock.Mock(side_effect=AssertionError("runner reloaded live config"))
         return (
             mock.patch("director.plan.run_plan", plan_fn),
             mock.patch("director.run.run_job", run_fn),
-            mock.patch("director.config.load", mock.Mock(return_value=cfg)),
+            mock.patch("director.config.load", forbidden),
             plan_fn,
             run_fn,
         )
@@ -173,6 +186,15 @@ class RunnerTestCase(unittest.TestCase):
         result = self.store.read_result(self.jid)
         self.assertEqual(result["error"]["code"], "internal")
         self.assertIn("ZeroDivisionError", result["error"]["message"])
+
+    def test_missing_config_snapshot_is_config_invalid(self):
+        self.store.config_path(self.jid).unlink()
+        p1, p2, p3, _, run_fn = self._patched()
+        with p1, p2, p3:
+            rc = run_job_process(self.jid, root=self.home, log=lambda m: None)
+        self.assertEqual(rc, 1)
+        self.assertEqual(self.store.read_result(self.jid)["error"]["code"], "config_invalid")
+        run_fn.assert_not_called()
 
     def test_over_budget_before_run(self):
         self.store.update_job(self.jid, settings={"parallel": 1, "max_cost": 0.5})

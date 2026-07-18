@@ -76,8 +76,14 @@ def _plan_and_run(store: JobStore, job: dict, ctx: JobContext, log) -> dict:
     request = storage.read_json(store.request_path(job_id)) or {}
     task = request.get("task")
 
+    # The runner NEVER reloads config from the submitted checkout: the resolved
+    # snapshot was captured (and validated) at submission, so post-submission
+    # edits to the repo's .director/config.toml cannot change an accepted job.
+    snap = storage.read_json(store.config_path(job_id))
+    if snap is None:
+        raise JobError("config_invalid", "job has no persisted config snapshot")
     try:
-        cfg = config.load(Path(job["repo"]))
+        cfg = config.from_snapshot(snap, store.config_path(job_id))
     except (FileNotFoundError, ValueError) as e:
         raise JobError("config_invalid", str(e)) from e
 

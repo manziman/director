@@ -29,6 +29,18 @@ from director.agent.supervisor import (  # noqa: E402
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
+# Submission resolves and validates config, so test repos carry a minimal
+# complete repo-local config (merged over any user-level file on the machine).
+REPO_CONFIG = """\
+[tiers]
+planner = "claude-code/opus"
+test_author = "claude-code/sonnet"
+executor = "claude-code/sonnet"
+explorer = "claude-code/sonnet"
+reviewer = "claude-code/sonnet"
+escalation = "claude-code/sonnet"
+"""
+
 # A well-behaved fake runner: prepares the workspace worktree exactly like the
 # real one, heartbeats, commits work on the job branch, writes a result.
 OK_RUNNER = """
@@ -117,6 +129,8 @@ class SupervisorTestCase(unittest.TestCase):
         gitutil.git(["config", "user.email", "t@t"], self.repo)
         gitutil.git(["config", "user.name", "t"], self.repo)
         (self.repo / "README.md").write_text("hello\n")
+        (self.repo / ".director").mkdir()
+        (self.repo / ".director" / "config.toml").write_text(REPO_CONFIG)
         gitutil.commit_all("init", self.repo)
         self.head = gitutil.current_commit(self.repo)
 
@@ -201,6 +215,24 @@ class SubmitTests(SupervisorTestCase):
         self.assertEqual(Path(job["repo"]), self.repo.resolve())
         self.assertTrue(Path(job["git_common_dir"]).is_absolute())
         self.assertEqual(job["job_branch"], f"director/{job['job_id']}")
+
+    def test_submission_snapshots_config_against_later_edits(self):
+        from director import config as config_mod
+
+        job = self._submit()
+        snap_path = self.store.config_path(job["job_id"])
+        snap = storage.read_json(snap_path)
+        self.assertEqual(snap["tiers"]["executor"], "claude-code/sonnet")
+        # a post-submission edit to the checkout's config must not reach the job
+        (self.repo / ".director" / "config.toml").write_text("not [ valid toml")
+        cfg = config_mod.from_snapshot(storage.read_json(snap_path), snap_path)
+        self.assertEqual(cfg.model_for("executor"), "claude-code/sonnet")
+
+    def test_broken_config_rejected_at_submission(self):
+        (self.repo / ".director" / "config.toml").write_text("not [ valid toml")
+        with self.assertRaises(SubmitError) as ctx:
+            self.sup.submit({"repo": str(self.repo), "task": "x"})
+        self.assertEqual(ctx.exception.code, "config_invalid")
 
     def test_request_id_idempotency_and_conflict(self):
         job = self._submit(request_id="rid-1")
@@ -335,6 +367,33 @@ class CrashRecoveryTests(SupervisorTestCase):
         self.assertIn(storage.INTERRUPTED, states)
         # a durable result exists so `wait` terminates
         self.assertFalse(self.store.read_result(jid)["ok"])
+
+
+class ClaimQueuedTests(SupervisorTestCase):
+    """The queued-with-recorded-PID window: a supervisor that died between
+    _spawn() and the runner reaching `preparing` must never cause a second
+    live runner for the same job."""
+
+    def test_live_just_spawned_runner_is_adopted_not_respawned(self):
+        jid = self._submit("window")["job_id"]
+        self.store.beat(jid, os.getpid())  # runner already heartbeating
+        self.store.update_job(jid, pid=os.getpid())
+        self.sup.tick()
+        self.assertIn(jid, self.sup._adopted)
+        self.assertNotIn("runner_started", [e["event"] for e in self.store.read_events(jid)])
+
+    def test_booting_runner_gets_a_heartbeat_window_before_respawn(self):
+        jid = self._submit("booting")["job_id"]
+        # live PID recorded moments ago, but no heartbeat yet: not spawnable yet
+        self.store.update_job(jid, pid=os.getpid())
+        self.assertFalse(self.sup._claim_queued(self.store.load_job(jid)))
+        self.assertEqual(self.store.load_job(jid)["pid"], os.getpid())
+
+    def test_dead_recorded_pid_is_cleared_and_spawnable(self):
+        jid = self._submit("dead spawn")["job_id"]
+        self.store.update_job(jid, pid=2**22 + 555)
+        self.assertTrue(self.sup._claim_queued(self.store.load_job(jid)))
+        self.assertIsNone(self.store.load_job(jid)["pid"])
 
 
 class ReconcileTests(SupervisorTestCase):
