@@ -40,9 +40,11 @@ class RenderTests(unittest.TestCase):
         self.assertIn("[Unit]", unit)
         self.assertIn("ExecStart=", unit)
         exec_line = next(line for line in unit.splitlines() if line.startswith("ExecStart="))
-        # absolute executable — services do not get a login PATH
-        executable = exec_line.removeprefix("ExecStart=").split()[0]
+        # absolute executable — services do not get a login PATH. Compare via
+        # the source argv: the rendered form may be quoted (e.g. Windows paths).
+        executable = service.serve_argv(8642)[0]
         self.assertTrue(Path(executable).is_absolute(), exec_line)
+        self.assertIn(service._systemd_quote(executable), exec_line)
         self.assertIn("agent serve --host 127.0.0.1 --port 8642", unit)
         self.assertIn("Restart=on-failure", unit)
         self.assertIn("WantedBy=default.target", unit)
@@ -83,12 +85,15 @@ class EscapingTests(unittest.TestCase):
 
     def test_launchd_plist_escapes_xml_metacharacters(self):
         from unittest import mock
+        from xml.sax.saxutils import escape
 
+        log = Path("/logs/a&b/agent.log")  # str() differs per platform — compare escaped str()
         with mock.patch.object(service, "executable_argv", return_value=[self.WEIRD]):
-            plist = service.render_launchd_plist(8642, Path("/logs/a&b/agent.log"))
+            plist = service.render_launchd_plist(8642, log)
         self.assertIn("<string>/weird path/dir&amp;co/&lt;director&gt;</string>", plist)
-        self.assertIn("<string>/logs/a&amp;b/agent.log</string>", plist)
+        self.assertIn(f"<string>{escape(str(log))}</string>", plist)
         self.assertNotIn(self.WEIRD, plist)  # nothing unescaped slips through
+        self.assertNotIn("a&b", plist)
 
 
 class ServiceFailureTests(unittest.TestCase):
