@@ -18,7 +18,13 @@ class RunState:
 
     @classmethod
     def load_or_init(cls, repo: Path, plan) -> RunState:
-        path = Path(repo) / ".director" / "state.json"
+        return cls.load_or_init_at(Path(repo) / ".director", plan)
+
+    @classmethod
+    def load_or_init_at(cls, state_dir: Path, plan) -> RunState:
+        """Load/initialize state from an explicit artifact directory (agent jobs
+        keep state outside the repository — see director.jobctx)."""
+        path = Path(state_dir) / "state.json"
         rs = cls(path, plan.job_id)
         if path.exists():
             d = json.loads(path.read_text())

@@ -1,4 +1,4 @@
-"""director CLI — plan | run | status | ui | bench | sync-agents | init | auto."""
+"""director CLI — plan | run | status | ui | bench | sync-agents | init | auto | agent."""
 
 from __future__ import annotations
 
@@ -150,7 +150,7 @@ def cmd_auto(args) -> int:
 
     # Resume guard — before the server binds, so an invalid invocation does nothing.
     ddir = repo / ".director"
-    progress = PlanProgress.load(repo)
+    progress = PlanProgress.load(ddir)
     skip_planning = False
     if args.force:
         if task is None:
@@ -345,6 +345,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pa.add_argument("--force", action="store_true")
     pa.set_defaults(func=cmd_auto)
+
+    from director.agent.cli import add_agent_parser
+
+    add_agent_parser(sub)
 
     return p
 

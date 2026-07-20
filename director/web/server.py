@@ -88,14 +88,20 @@ def _planning_info(fdir: Path, last_good: dict | None = None) -> dict | None:
 
 
 def build_state(repo: str | Path, last_good: dict | None = None) -> dict:
-    """Assemble the merged plan + state + summary document behind /api/state.
+    """Assemble the /api/state document for a repo's `.director/` directory."""
+    return build_state_dir(Path(repo).resolve() / ".director", last_good)
+
+
+def build_state_dir(fdir: str | Path, last_good: dict | None = None) -> dict:
+    """Assemble the merged plan + state + summary document behind /api/state
+    from an explicit artifact directory (repo `.director/` or an agent job's
+    `artifacts/`).
 
     `run` rewrites state.json (and appends to the jsonl ledgers) from another
     process, so a poll can rarely catch a partial file; on a malformed read this
     serves `last_good` (the previous successful snapshot) when available.
     """
-    repo = Path(repo).resolve()
-    fdir = repo / ".director"
+    fdir = Path(fdir)
     planning = _planning_info(fdir, last_good)
     plan_path = fdir / "plan.json"
     if not plan_path.exists():
@@ -111,7 +117,7 @@ def build_state(repo: str | Path, last_good: dict | None = None) -> dict:
         }
 
     try:
-        state = RunState.load_or_init(repo, plan)
+        state = RunState.load_or_init_at(fdir, plan)
     except (ValueError, TypeError):
         if last_good is not None:
             return last_good
@@ -165,13 +171,16 @@ def build_state(repo: str | Path, last_good: dict | None = None) -> dict:
 
 
 def read_node_logs(repo: str | Path, node_id: str, max_bytes: int = MAX_LOG_BYTES) -> str:
+    return read_node_logs_dir(Path(repo).resolve() / ".director", node_id, max_bytes)
+
+
+def read_node_logs_dir(fdir: str | Path, node_id: str, max_bytes: int = MAX_LOG_BYTES) -> str:
     """Concatenated raw logs (`logs/<node>-*.jsonl`) for one plan node.
 
     `node_id` must be an exact id in the loaded plan — anything else (including
     path-traversal attempts) raises KeyError before disk is touched.
     """
-    repo = Path(repo).resolve()
-    fdir = repo / ".director"
+    fdir = Path(fdir)
     plan_path = fdir / "plan.json"
     if not plan_path.exists():
         raise FileNotFoundError(_NO_PLAN_MSG)
@@ -196,6 +205,10 @@ def read_node_logs(repo: str | Path, node_id: str, max_bytes: int = MAX_LOG_BYTE
 
 
 def read_artifact(repo: str | Path, name: str, max_bytes: int = MAX_LOG_BYTES) -> str:
+    return read_artifact_dir(Path(repo).resolve() / ".director", name, max_bytes)
+
+
+def read_artifact_dir(fdir: str | Path, name: str, max_bytes: int = MAX_LOG_BYTES) -> str:
     """A planning artifact (recon.md / spec.md) for the artifact viewer.
 
     `name` must be a key in the fixed `_ARTIFACTS` allowlist — the client never
@@ -204,7 +217,7 @@ def read_artifact(repo: str | Path, name: str, max_bytes: int = MAX_LOG_BYTES) -
     fname = _ARTIFACTS.get(name)
     if fname is None:
         raise KeyError(f"unknown artifact: {name!r}")
-    path = Path(repo).resolve() / ".director" / fname
+    path = Path(fdir) / fname
     if not path.exists():
         raise FileNotFoundError(f"{fname} not written yet")
     text = path.read_text(errors="replace")

@@ -183,7 +183,13 @@ class TestRunSource(unittest.TestCase):
         self.assertIn("output", names)
 
     def test_gettempdir_usage_preserved(self):
-        self.assertIn("tempfile.gettempdir()", self.src)
+        # The temp-dir worktree root moved behind JobContext (issue #38): run.py
+        # asks the context, and the legacy context still uses tempfile.gettempdir().
+        self.assertIn("ctx.worktree_root(plan.job_id)", self.src)
+        jobctx_src = (
+            pathlib.Path(__file__).resolve().parent.parent / "director" / "jobctx.py"
+        ).read_text()
+        self.assertIn("tempfile.gettempdir()", jobctx_src)
 
 
 if __name__ == "__main__":

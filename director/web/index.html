@@ -115,7 +115,7 @@ const usd = x => "$" + Number(x || 0).toFixed(4);
 
 async function tick() {
   try {
-    const r = await fetch("/api/state");
+    const r = await fetch("api/state");
     const text = await r.text();
     $("conn").textContent = "● live"; $("conn").classList.remove("err");
     if (text === lastText) return;      // only re-render when state changed
@@ -193,7 +193,7 @@ async function showArtifact(name) {
   openArtifact = name;
   box.hidden = false; box.textContent = "loading…";
   try {
-    const r = await fetch("/api/artifact/" + encodeURIComponent(name));
+    const r = await fetch("api/artifact/" + encodeURIComponent(name));
     box.textContent = await r.text();
   } catch (e) { box.textContent = "failed to load " + name + ": " + e; }
 }
@@ -301,7 +301,7 @@ function renderDetail() {
   $("loadlogs").addEventListener("click", async () => {
     const box = $("logbox"); box.hidden = false; box.textContent = "loading…";
     try {
-      const r = await fetch("/api/logs/" + encodeURIComponent(n.id));
+      const r = await fetch("api/logs/" + encodeURIComponent(n.id));
       box.textContent = await r.text();
     } catch (e) { box.textContent = "failed to load logs: " + e; }
   });

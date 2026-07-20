@@ -27,6 +27,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from director import config, gitutil
 from director.config import Config
 from director.gates import node_gate
+from director.jobctx import JobContext
 from director.models import Node
 from director.opencode import RunResult, watch_it_fail
 
@@ -533,7 +534,7 @@ class PruneStaleDirectorTestsTests(unittest.TestCase):
         try:
             planmod._author_tests(
                 self._current_plan(),
-                self.tmp,
+                JobContext.for_repo(self.tmp),
                 self.cfg,
                 self._ledger(),
                 self.fdir / "logs",
@@ -563,7 +564,7 @@ class PruneStaleDirectorTestsTests(unittest.TestCase):
         try:
             planmod._author_tests(
                 self._current_plan(),
-                self.tmp,
+                JobContext.for_repo(self.tmp),
                 self.cfg,
                 self._ledger(),
                 self.fdir / "logs",
@@ -587,7 +588,7 @@ class PruneStaleDirectorTestsTests(unittest.TestCase):
         try:
             planmod._author_tests(
                 self._current_plan(),
-                self.tmp,
+                JobContext.for_repo(self.tmp),
                 self.cfg,
                 self._ledger(),
                 self.fdir / "logs",
@@ -671,7 +672,12 @@ class PruneStaleDirectorTestsTests(unittest.TestCase):
         planmod.run_agent = self._fake_agent()
         try:
             planmod._stage_bc_decompose(
-                self._prog(), self.tmp, self.cfg, self._ledger(), self.fdir / "logs", lambda m: None
+                self._prog(),
+                JobContext.for_repo(self.tmp),
+                self.cfg,
+                self._ledger(),
+                self.fdir / "logs",
+                lambda m: None,
             )
         finally:
             planmod.run_agent = orig
@@ -699,7 +705,12 @@ class PruneStaleDirectorTestsTests(unittest.TestCase):
         planmod.run_agent = self._fake_agent()
         try:
             planmod._stage_bc_decompose(
-                self._prog(), self.tmp, self.cfg, self._ledger(), self.fdir / "logs", lambda m: None
+                self._prog(),
+                JobContext.for_repo(self.tmp),
+                self.cfg,
+                self._ledger(),
+                self.fdir / "logs",
+                lambda m: None,
             )
         finally:
             planmod.run_agent = orig
@@ -717,7 +728,12 @@ class PruneStaleDirectorTestsTests(unittest.TestCase):
         planmod.run_agent = self._fake_agent()
         try:
             planmod._stage_bc_decompose(
-                self._prog(), self.tmp, self.cfg, self._ledger(), self.fdir / "logs", lambda m: None
+                self._prog(),
+                JobContext.for_repo(self.tmp),
+                self.cfg,
+                self._ledger(),
+                self.fdir / "logs",
+                lambda m: None,
             )
         finally:
             planmod.run_agent = orig

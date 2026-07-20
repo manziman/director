@@ -205,8 +205,14 @@ def _build_config(data: dict, path: Path) -> Config:
     )
 
 
-def load(repo: Path) -> Config:
-    """Load the active config, merging user-level then repo-level configs."""
+def snapshot(repo: Path) -> dict:
+    """The fully merged raw config data for `repo`, exactly as `load` resolves
+    it (user-level then repo-level, repo-local-only gates).
+
+    The agent persists this at job submission so an accepted job is immune to
+    later edits of the submitted checkout's `.director/config.toml` — the
+    runner rebuilds its Config from the snapshot, never from live files.
+    """
     user_path = _user_config_path()
     repo_path = Path(repo) / ".director" / "config.toml"
 
@@ -228,9 +234,20 @@ def load(repo: Path) -> Config:
         # Gates are repo-local only. The repository table is a complete set,
         # and omission configures no gates.
         data["gates"] = repo_data.get("gates", {})
+    return data
 
-    active_path = repo_path if repo_path.exists() else user_path
-    return _build_config(data, active_path)
+
+def from_snapshot(data: dict, label: str | Path) -> Config:
+    """Build (and validate) a Config from a persisted `snapshot()` dict.
+    `label` names the snapshot's origin in error messages."""
+    return _build_config(data, Path(label))
+
+
+def load(repo: Path) -> Config:
+    """Load the active config, merging user-level then repo-level configs."""
+    repo_path = Path(repo) / ".director" / "config.toml"
+    active_path = repo_path if repo_path.exists() else _user_config_path()
+    return _build_config(snapshot(repo), active_path)
 
 
 def load_file(path: Path) -> Config:
