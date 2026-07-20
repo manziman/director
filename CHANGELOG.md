@@ -1,6 +1,104 @@
 # CHANGELOG
 
 
+## v0.11.0 (2026-07-20)
+
+### Bug Fixes
+
+- Improve gate failure attribution ([#43](https://github.com/manziman/director/pull/43),
+  [`c1076d3`](https://github.com/manziman/director/commit/c1076d31ae5b3f82588749d1ff58098f54853749))
+
+### Features
+
+- Add Pi coding-agent provider ([#37](https://github.com/manziman/director/pull/37),
+  [`33650e4`](https://github.com/manziman/director/commit/33650e49b16511a3c3e42193b459cb7fc1c6f2e5))
+
+* feat: add Pi coding-agent provider
+
+* fix: harden Pi event parsing
+
+* fix: align Pi diagnostics and install docs
+
+* fix: satisfy CI lint and format checks
+
+- Load repository coding guidance ([#44](https://github.com/manziman/director/pull/44),
+  [`7b441b9`](https://github.com/manziman/director/commit/7b441b9e2925421b011a228b47f2a218e3937665))
+
+- Local director agent — concurrent job supervisor, unified UI, orchestrator CLI
+  ([#45](https://github.com/manziman/director/pull/45),
+  [`e61d7a3`](https://github.com/manziman/director/commit/e61d7a33b3f9b247c7e150643718ddd243318048))
+
+* feat: local director agent — concurrent job supervisor, unified UI, orchestrator CLI (#38)
+
+Add `director agent`, a machine-local durable job supervisor that accepts, runs, monitors, recovers,
+  and retains multiple Director jobs — including simultaneous jobs against the same Git repository.
+
+- JobContext (director/jobctx.py): planning/execution/state/web assembly now receive an explicit
+  context (source_repo, workspace, artifact_dir, node_worktree_dir, job_id/branch/base_commit)
+  instead of deriving every path from `<repo>/.director`. Legacy plan/run/auto/status/ui behavior
+  unchanged. - Job-scoped shared storage under ~/.director/agent/ (DIRECTOR_AGENT_HOME to override):
+  request/job/result JSON written atomically, seq-numbered events.jsonl with flock'd monotonic
+  cursors, heartbeat files, bearer token. - Runner processes own lifecycle truth: per-job top-level
+  worktree on a unique director/job-<id> branch cut from the base commit captured at submission; the
+  submitted checkout is never touched; artifacts persist for resume. - Supervisor: FIFO scheduling
+  with a concurrency cap, restart reconciliation (re-adopt live runners by pid+fresh heartbeat,
+  reflect finished results, interrupted→resume with a bounded retry budget), process-group
+  cancellation, retry, prune, corrupt-state repair to a stable `lost` state. - Loopback HTTP API +
+  read-only dashboard: /api/jobs CRUD (mutations behind a user-only bearer token), agent status with
+  preflight warnings, a multi-job index page, and /job/<id>/ reusing the existing DAG dashboard
+  against the job's artifact dir (only registered job ids resolve). - Orchestrator CLI contract:
+  submit/list/show/wait/logs/events/cancel/retry/ prune/status/serve, all with --json
+  single-document stdout, JSONL events, --request-id idempotency, repeatable --label, and stable
+  exit codes (0 ok, 1 wait-failure, 2 usage, 3 daemon down, 4 not found, 5 conflict, 6 wait
+  timeout). Reads work directly from storage while the daemon is down. - Native user services:
+  systemd --user unit (Linux) and LaunchAgent (macOS) rendering + idempotent
+  install/uninstall/start/stop/restart/status, strict never-shell-evaluated agent.env, preflight
+  diagnostics, manual smoke-test doc in docs/agent-smoke-tests.md.
+
+Closes #38
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+* fix: address agent review — config snapshots, spawn race, service escaping/rc checks
+
+Review blockers (PR #45): - Submission now resolves, validates, and persists the merged config as
+  jobs/<id>/config.json; the runner builds its Config exclusively from that snapshot, so
+  post-submission edits to the checkout's .director/config.toml can no longer change (or invalidate)
+  an accepted job, and a broken config fails the submission with a stable config_invalid code
+  instead of the runner. - Closed the queued-with-recorded-PID window: _fill_capacity now skips jobs
+  already tracked, adopts a live just-spawned runner (fresh heartbeat), gives a booting runner one
+  heartbeat window before declaring it dead, and only then clears the PID and respawns — a
+  supervisor crash between _spawn() and the runner reaching `preparing` can no longer double-run a
+  job. - systemd ExecStart arguments are quoted (systemd syntax) and launchd plist strings are
+  XML-escaped, so paths with spaces, &, or < render usable service definitions. -
+  systemctl/launchctl failures now raise ServiceError with the command and stderr instead of
+  reporting success; intentionally-idempotent steps (launchctl bootout before bootstrap, disable of
+  a missing unit) stay tolerated.
+
+Follow-ups: - `director agent logs --json` emits a single document (and JSON Lines under --follow),
+  completing the every-command---json contract. - token/agent.env permissions are clamped to 0600 on
+  use; preflight now flags configured providers whose executables are missing from PATH. - Removed
+  the unused supervisor helpers and consolidated the duplicated interrupted-resume logic into
+  _resume_or_fail.
+
+* test: make service render assertions platform-agnostic
+
+The escaped-plist assertion hardcoded the POSIX str() of the log Path and the systemd assertion
+  parsed the (now quoted) ExecStart line — both fail on the Windows CI matrix. Compare against the
+  source argv / escaped str() instead.
+
+---------
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+- Support user-defined repository gates ([#42](https://github.com/manziman/director/pull/42),
+  [`10eb13c`](https://github.com/manziman/director/commit/10eb13cede923f6a9b0014ba50d8b1c7d90ef8d8))
+
+* feat: support user-defined repository gates
+
+* fix: keep gates repo-local and optional
+
+
 ## v0.10.2 (2026-07-14)
 
 ### Bug Fixes

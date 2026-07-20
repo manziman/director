@@ -7,4 +7,4 @@ an isolated git worktree with a fresh context; user-defined deterministic gates
 model tiers in `.director/config.toml`; nothing here knows "local" vs "cloud".
 """
 
-__version__ = "0.10.2"
+__version__ = "0.11.0"
